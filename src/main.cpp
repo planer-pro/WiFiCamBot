@@ -18,6 +18,7 @@
 #include <ESPmDNS.h>
 #include "esp_camera.h"
 #include "esp_http_server.h"
+#include "driver/rmt.h"
 #include "wifi_secrets.h"
 
 #define HOSTNAME "esp32cam" // адрес будет http://esp32cam.local/
@@ -52,10 +53,11 @@
 #define XCLK_FREQ_HZ 20000000 // если артефакты/сбой DMA — попробуйте 16000000
 
 // ========================== RGB-СВЕТОДИОД =================================
-// Адресуемый светодиод WS2812 (есть на большинстве плат ESP32-S3), управляется
-// со страницы: кнопка «Свет» + выбор цвета. Если на вашей плате он на другом
-// пине или отсутствует — поправьте значение: 48 — Espressif DevKitC-1 и платы
-// Freenove, 38 — старые ревизии DevKitC-1, -1 — отключить управление.
+// Адресуемый светодиод WS2812, управляется со страницы: кнопка «Свет» + выбор
+// цвета. Пин 48 подтверждён на этой плате тестом (Espressif DevKitC-1 и платы
+// Freenove; 38 — старые ревизии DevKitC-1). -1 — отключить управление.
+// Важно: штатный neopixelWrite() ядра 2.0.17 этот светодиод не зажигает —
+// отправка идёт собственным драйвером ниже (wsSendColor).
 #define RGB_LED_GPIO_NUM 48
 
 // Уровни качества для переключателя на странице (/set?quality=N).
@@ -98,14 +100,51 @@ static const LightColor LIGHT_COLORS[] = {
 static volatile bool g_lightOn = false;
 static volatile int g_lightColor = LIGHT_COLOR_DEFAULT;
 
+// Отправка одного кадра WS2812 через RMT (канал 0, тик 50 нс). Собственная
+// реализация вместо neopixelWrite(): проверено на этой плате — штатная из
+// ядра 2.0.17 светодиод не зажигает, эта работает.
+static bool s_wsRmtReady = false;
+
+static void wsSendColor(uint8_t r, uint8_t g, uint8_t b)
+{
+#if RGB_LED_GPIO_NUM >= 0
+  if (!s_wsRmtReady)
+  {
+    rmt_config_t cfg = RMT_DEFAULT_CONFIG_TX((gpio_num_t)RGB_LED_GPIO_NUM,
+                                             RMT_CHANNEL_0);
+    cfg.clk_div = 4; // 80 МГц / 4 = 20 МГц, тик 50 нс
+    if (rmt_config(&cfg) != ESP_OK ||
+        rmt_driver_install(RMT_CHANNEL_0, 0, 0) != ESP_OK)
+    {
+      return; // RMT недоступен — светодиод просто не заработает
+    }
+    s_wsRmtReady = true;
+  }
+  rmt_item32_t items[24];
+  int i = 0;
+  uint8_t cols[3] = {g, r, b}; // порядок байтов в WS2812: GRB
+  for (int c = 0; c < 3; c++)
+  {
+    for (int bit = 7; bit >= 0; bit--)
+    {
+      bool one = cols[c] & (1 << bit);
+      items[i].level0 = 1;
+      items[i].duration0 = one ? 16 : 8; // 0.8 / 0.4 мкс
+      items[i].level1 = 0;
+      items[i].duration1 = one ? 8 : 16; // 0.4 / 0.8 мкс
+      i++;
+    }
+  }
+  rmt_write_items(RMT_CHANNEL_0, items, 24, true);
+  rmt_wait_tx_done(RMT_CHANNEL_0, pdMS_TO_TICKS(100));
+#endif
+}
+
 // Применяет текущие g_lightOn/g_lightColor к светодиоду (выключен — гасит).
 static void applyLight()
 {
-#if RGB_LED_GPIO_NUM >= 0
   const LightColor &c = LIGHT_COLORS[g_lightColor];
-  neopixelWrite(RGB_LED_GPIO_NUM, g_lightOn ? c.r : 0, g_lightOn ? c.g : 0,
-                g_lightOn ? c.b : 0);
-#endif
+  wsSendColor(g_lightOn ? c.r : 0, g_lightOn ? c.g : 0, g_lightOn ? c.b : 0);
 }
 
 // ========================= СТРАНИЦА И СТРИМ ===============================

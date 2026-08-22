@@ -61,10 +61,12 @@ avahi-resolve -n esp32cam.local
 на странице повёрнута на 90° по часовой стрелке средствами CSS (как изменить
 угол — комментарий в `INDEX_HTML` в `src/main.cpp`).
 
-Светодиод — адресуемый WS2812, пин задаётся `RGB_LED_GPIO_NUM` в `src/main.cpp`
-(по умолчанию 48 — Espressif DevKitC-1 и платы Freenove; если на вашей плате
-не светится — посмотрите пин в схеме/примере производителя). Таблица цветов —
-`LIGHT_COLORS`, она должна совпадать с `<option>` в `INDEX_HTML`.
+Светодиод — адресуемый WS2812 на пине `RGB_LED_GPIO_NUM` в `src/main.cpp`
+(48 — Espressif DevKitC-1 и платы Freenove; подтверждён на этой плате тестом,
+38 — старые ревизии DevKitC-1). Отправка кода WS2812 — собственный драйвер
+`wsSendColor()` через RMT: штатный `neopixelWrite()` ядра arduino-esp32 2.0.17
+этот светодиод не зажигает. Таблица цветов — `LIGHT_COLORS`, она должна
+совпадать с `<option>` в `INDEX_HTML`.
 
 Качество по умолчанию — «среднее» (VGA 640x480); меняется правкой
 `QUALITY_DEFAULT` или таблицы `QUALITY_PRESETS` в `src/main.cpp`.
