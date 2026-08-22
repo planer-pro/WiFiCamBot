@@ -1,0 +1,6 @@
+# PlatformIO: сборка и настройки среды
+.pio/
+.vscode/
+
+# Данные WiFi (реальные SSID/пароль). Образец — src/wifi_secrets.h.example
+src/wifi_secrets.h
