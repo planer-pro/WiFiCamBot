@@ -789,6 +789,167 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
+// ====================== ТЕСТОВАЯ СТРАНИЦА ГЕЙМПАДА ========================
+// /pad — диагностика Gamepad API браузера с нашего origin (http, не https):
+// показывает, доступен ли API вообще, считает ли страница безопасным
+// контекстом (без этого браузер геймпад не отдаст — на странице подсказка
+// про флаг Chrome), и рисует живые оси/кнопки подключённых геймпадов.
+// Заготовка под управление роботом с геймпада (см. INDEX_HTML).
+static const char PAD_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WiFiCamBot — тест геймпада</title>
+<style>
+  :root { --bg:#0b0d10; --card:#14171c; --field:#0f1216; --border:#262c35;
+          --text:#e8eaed; --muted:#9aa3ad; --accent:#55b2ff;
+          --green:#2ecc71; --red:#ff5d5d; }
+  body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+         background: radial-gradient(120% 90% at 50% 0%, #131820 0%, var(--bg) 55%);
+         color: var(--text); margin: 0 auto; padding: 16px;
+         max-width: 720px; text-align: left; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 12px; padding: 14px; margin: 12px 0; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  #st { font-size: 15px; font-weight: 600; }
+  .ok { color: var(--green); }
+  .bad { color: var(--red); }
+  code { background: var(--field); border: 1px solid var(--border);
+         border-radius: 6px; padding: 1px 6px; font-size: 12px; }
+  .axes { display: flex; gap: 16px; flex-wrap: wrap; }
+  .stick { width: 120px; height: 120px; border: 1px solid var(--border);
+           border-radius: 12px; position: relative; background: var(--field); }
+  .stick::before { content: ''; position: absolute; left: 50%; top: 0;
+                   bottom: 0; width: 1px; background: #232a33; }
+  .stick::after { content: ''; position: absolute; top: 50%; left: 0;
+                  right: 0; height: 1px; background: #232a33; }
+  .pt { position: absolute; width: 18px; height: 18px; border-radius: 50%;
+        background: var(--accent); transform: translate(-50%, -50%);
+        left: 50%; top: 50%; }
+  .albl { font-size: 11px; color: var(--muted); margin-top: 4px;
+          text-align: center; }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .b { min-width: 34px; height: 34px; border: 1px solid var(--border);
+       border-radius: 8px; background: var(--field); color: var(--muted);
+       font-size: 11px; display: flex; align-items: center;
+       justify-content: center; }
+  .b.on { background: #0e3b22; border-color: var(--green); color: #d9ffe8; }
+  button { background: var(--field); color: var(--text);
+           border: 1px solid var(--border); border-radius: 8px;
+           padding: 6px 14px; font-size: 13px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Тест геймпада <span class="muted">— WiFiCamBot</span></h1>
+  <div id="st">…</div>
+  <div id="hint" class="muted"></div>
+</div>
+<div id="pads"></div>
+<p><a href="/" class="muted">&larr; к камере</a></p>
+<script>
+  var st = document.getElementById('st');
+  var hint = document.getElementById('hint');
+  var padsEl = document.getElementById('pads');
+  var cards = {}; // index -> карточка геймпада
+  function setStatus(html, cls) { st.innerHTML = html; st.className = cls || ''; }
+  if (!navigator.getGamepads)
+  {
+    setStatus('&#10006; Gamepad API в этом браузере отсутствует', 'bad');
+  }
+  else if (!window.isSecureContext)
+  {
+    setStatus('&#10006; Страница не считается безопасным контекстом — браузер скрывает геймпады', 'bad');
+    hint.innerHTML = 'Gamepad API отдаётся только на https. Разрешите наш адрес вручную: ' +
+      'откройте <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, ' +
+      'впишите <code>http://wificambot.local</code>, включите и перезапустите браузер.';
+  }
+  else
+  {
+    setStatus('&#10003; API доступен, контекст безопасный', 'ok');
+    hint.textContent = 'Подключите геймпад и нажмите на нём любую кнопку или шевельните стик — ' +
+      'браузер показывает устройство только после действия.';
+  }
+  function ensureCard(i, id)
+  {
+    if (cards[i]) return cards[i];
+    var c = document.createElement('div');
+    c.className = 'card';
+    c.innerHTML = '<div class="muted">Геймпад ' + i + '</div>' +
+      '<div style="font-weight:600;margin:2px 0 10px"></div>' +
+      '<div class="axes">' +
+      '<div><div class="stick"><div class="pt"></div></div><div class="albl">оси 0–1</div></div>' +
+      '<div><div class="stick"><div class="pt"></div></div><div class="albl">оси 2–3</div></div>' +
+      '</div><div class="btns"></div>' +
+      '<p><button type="button">вибрация</button></p>';
+    padsEl.appendChild(c);
+    var card = { el: c, id: c.querySelectorAll('div')[1],
+                 pts: c.querySelectorAll('.pt'),
+                 btnsEl: c.querySelector('.btns'), btns: [] };
+    card.id.textContent = id;
+    card.vib = c.querySelector('button');
+    cards[i] = card;
+    return card;
+  }
+  window.addEventListener('gamepadconnected', function (ev) {
+    ensureCard(ev.gamepad.index, ev.gamepad.id);
+  });
+  window.addEventListener('gamepaddisconnected', function (ev) {
+    if (cards[ev.gamepad.index]) { cards[ev.gamepad.index].el.remove(); delete cards[ev.gamepad.index]; }
+  });
+  function frame()
+  {
+    var list = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (var i = 0; i < list.length; i++)
+    {
+      var g = list[i];
+      if (!g) continue;
+      var c = ensureCard(i, g.id);
+      for (var a = 0; a + 1 < g.axes.length && a < 4; a += 2)
+      {
+        var x = 50 + 50 * Math.max(-1, Math.min(1, g.axes[a]));
+        var y = 50 + 50 * Math.max(-1, Math.min(1, g.axes[a + 1]));
+        c.pts[a / 2].style.left = x + '%';
+        c.pts[a / 2].style.top = y + '%';
+      }
+      while (c.btns.length < g.buttons.length)
+      {
+        var b = document.createElement('div');
+        b.className = 'b';
+        b.textContent = c.btns.length;
+        c.btnsEl.appendChild(b);
+        c.btns.push(b);
+      }
+      for (var n = 0; n < g.buttons.length; n++)
+      {
+        c.btns[n].className =
+            (g.buttons[n].pressed || g.buttons[n].value > 0.5) ? 'b on' : 'b';
+      }
+      var act = g;
+      c.vib.onclick = function () {
+        if (act.vibrationActuator)
+          act.vibrationActuator.playEffect('dual-rumble',
+              { duration: 300, strongMagnitude: 1.0, weakMagnitude: 0.5 });
+      };
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>
+)rawliteral";
+
+static esp_err_t pad_handler(httpd_req_t *req)
+{
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, PAD_HTML, strlen(PAD_HTML));
+}
+
 // =========================== ИНИЦИАЛИЗАЦИЯ КАМЕРЫ ========================
 static bool applyQuality(int level); // определяется ниже по коду
 
@@ -1085,8 +1246,11 @@ static void startWebServer()
         .uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
     const httpd_uri_t uri_set = {
         .uri = "/set", .method = HTTP_GET, .handler = set_handler, .user_ctx = NULL};
+    const httpd_uri_t uri_pad = {
+        .uri = "/pad", .method = HTTP_GET, .handler = pad_handler, .user_ctx = NULL};
     httpd_register_uri_handler(server, &uri_index);
     httpd_register_uri_handler(server, &uri_set);
+    httpd_register_uri_handler(server, &uri_pad);
   }
 
   httpd_config_t streamConfig = HTTPD_DEFAULT_CONFIG();
