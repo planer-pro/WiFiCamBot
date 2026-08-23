@@ -3,11 +3,13 @@
  * Захват изображения с камеры и живой веб-просмотр по WiFi (MJPEG-стрим).
  *
  * Маршруты веб-сервера:
- *   /              — страница с живым видео
- *   /stream        — MJPEG-поток (multipart/x-mixed-replace)
+ *   /              — страница с живым видео (порт 80)
  *   /set?quality=N — качество: 0 мин. … 4 макс. (меняется на лету)
  *   /set?light=0|1 — RGB-светодиод платы: выключен / включён
  *   /set?color=N   — цвет светодиода (таблица LIGHT_COLORS, 0 = белый)
+ *   /stream        — MJPEG-поток (multipart/x-mixed-replace), ОТДЕЛЬНЫЙ
+ *                    сервер на порту 81: поток httpd один, и бесконечный
+ *                    стрим-хэндлер блокирует остальные запросы (проверено).
  *
  * Данные WiFi — в src/wifi_secrets.h (в git не попадает, см. .gitignore;
  * образец — wifi_secrets.h.example).
@@ -195,7 +197,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
 <h2>ESP32-S3 &mdash; живой просмотр</h2>
-<div class="stage"><img id="stream" src="/stream" alt="видеопоток"></div>
+<div class="stage"><img id="stream" alt="видеопоток"></div>
 <p>
 Качество:
 <select id="quality">
@@ -220,17 +222,21 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </select>
 </p>
 <script>
-  // при обрыве потока перезапускаем его через секунду
+  // Стрим обслуживает ОТДЕЛЬНЫЙ сервер на порту 81 (бесконечный /stream
+  // блокирует поток httpd, а с ним и /set на порту 80 — см. startWebServer).
+  // Относительной ссылки на другой порт не бывает — строим абсолютную.
+  var streamUrl = 'http://' + location.hostname + ':81/stream';
   var img = document.getElementById('stream');
+  img.src = streamUrl; // при обрыве потока перезапускаем его через секунду
   img.onerror = function () {
-    setTimeout(function () { img.src = '/stream?' + Date.now(); }, 1000);
+    setTimeout(function () { img.src = streamUrl + '?' + Date.now(); }, 1000);
   };
   // переключатель качества: применяется на плате, затем поток перезапускается
   var sel = document.getElementById('quality');
   sel.value = '@Q@';
   sel.onchange = function () {
     fetch('/set?quality=' + sel.value).then(function () {
-      img.src = '/stream?' + Date.now();
+      img.src = streamUrl + '?' + Date.now();
     });
   };
   // RGB-светодиод: кнопка вкл/выкл и выбор цвета
@@ -373,6 +379,8 @@ static esp_err_t set_handler(httpd_req_t *req)
 static esp_err_t index_handler(httpd_req_t *req)
 {
   httpd_resp_set_type(req, "text/html");
+  // страницу не кэшировать: после перепрошивки JS должен обновиться
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
   // подставляем текущие значения вместо меток @Q@/@L@/@C@ в странице
   const char *marks[3] = {"@Q@", "@L@", "@C@"};
   char qbuf[4], lbuf[4], cbuf[4];
@@ -457,27 +465,39 @@ static esp_err_t stream_handler(httpd_req_t *req)
 }
 
 // ============================= ВЕБ-СЕРВЕР =================================
+// esp_http_server обслуживает все соединения ОДНИМ потоком, а stream_handler
+// не возвращается, пока клиент не отключится. На одном сервере это намертво
+// блокирует /set — кнопка «Свет» и качество не работали при открытом стриме
+// (проверено на железе: /set при открытом /stream не отвечает, после закрытия
+// отвечает мгновенно). Поэтому ДВА экземпляра сервера: порт 80 — страница и
+// управление, порт 81 — только стрим. Так же сделано в CameraWebServer.
 static void startWebServer()
 {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
 
   httpd_handle_t server = NULL;
-  if (httpd_start(&server, &config) != ESP_OK)
+  if (httpd_start(&server, &config) == ESP_OK)
   {
-    return;
+    const httpd_uri_t uri_index = {
+        .uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
+    const httpd_uri_t uri_set = {
+        .uri = "/set", .method = HTTP_GET, .handler = set_handler, .user_ctx = NULL};
+    httpd_register_uri_handler(server, &uri_index);
+    httpd_register_uri_handler(server, &uri_set);
   }
 
-  const httpd_uri_t uri_index = {
-      .uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
-  const httpd_uri_t uri_stream = {
-      .uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL};
-  const httpd_uri_t uri_set = {
-      .uri = "/set", .method = HTTP_GET, .handler = set_handler, .user_ctx = NULL};
+  httpd_config_t streamConfig = HTTPD_DEFAULT_CONFIG();
+  streamConfig.server_port = 81;
+  streamConfig.ctrl_port += 1; // управляющий сокет второго сервера не должен совпадать
 
-  httpd_register_uri_handler(server, &uri_index);
-  httpd_register_uri_handler(server, &uri_stream);
-  httpd_register_uri_handler(server, &uri_set);
+  httpd_handle_t streamServer = NULL;
+  if (httpd_start(&streamServer, &streamConfig) == ESP_OK)
+  {
+    const httpd_uri_t uri_stream = {
+        .uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL};
+    httpd_register_uri_handler(streamServer, &uri_stream);
+  }
 }
 
 // ================================ SETUP ===================================
