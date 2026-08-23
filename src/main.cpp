@@ -310,7 +310,6 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     height: 82vh;          /* повёрнутый кадр — вертикальный */
     aspect-ratio: 3 / 4;   /* пропорции повёрнутого VGA-кадра */
     max-width: 100%;
-    margin: 0 auto;
   }
   .stage img {
     position: absolute;
