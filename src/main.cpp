@@ -15,6 +15,9 @@
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
  *
+ * Настройки (качество, свет+цвет, обе мощности) сохраняются в NVS при каждом
+ * изменении и восстанавливаются при включении питания — см. settingsLoad().
+ *
  * Плюс приём прошивки по WiFi (ArduinoOTA, порт 3232) — см. setup().
  *
  * Данные WiFi — в src/wifi_secrets.h (в git не попадает, см. .gitignore;
@@ -25,6 +28,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
+#include <Preferences.h>
 #include "esp_camera.h"
 #include "esp_http_server.h"
 #include "driver/rmt.h"
@@ -238,6 +242,39 @@ static bool motorCommand(char c)
   g_motorLastMs = millis();
   applyMotors();
   return true;
+}
+
+// ==================== СОХРАНЕНИЕ НАСТРОЕК (NVS) ===========================
+// Качество, свет (вкл/выкл + цвет) и обе мощности переживают перезагрузку
+// питания: читаются здесь в setup(), пишутся в NVS при каждом изменении
+// через /set. Направление движения (motor=) не сохраняется — оно мгновенное.
+// Страница при открытии получает текущие значения метками (@Q@ и т.д.), так
+// что после восстановления из NVS браузер всё покажет сам.
+static Preferences s_prefs;
+
+static void settingsLoad()
+{
+  s_prefs.begin("cam", false); // пространство создаётся при первом обращении
+  int q = (int)s_prefs.getUChar("quality", QUALITY_DEFAULT);
+  if (q >= (int)(sizeof(QUALITY_PRESETS) / sizeof(QUALITY_PRESETS[0])))
+  {
+    q = QUALITY_DEFAULT;
+  }
+  g_quality = q;
+
+  g_lightOn = s_prefs.getBool("light", false);
+
+  int c = (int)s_prefs.getUChar("color", LIGHT_COLOR_DEFAULT);
+  if (c >= (int)(sizeof(LIGHT_COLORS) / sizeof(LIGHT_COLORS[0])))
+  {
+    c = LIGHT_COLOR_DEFAULT;
+  }
+  g_lightColor = c;
+
+  int sp = (int)s_prefs.getUChar("speed", 100);
+  g_motorSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
+  sp = (int)s_prefs.getUChar("tspeed", 100);
+  g_motorTurnSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
 }
 
 // ========================= СТРАНИЦА И СТРИМ ===============================
@@ -537,7 +574,7 @@ static bool initCamera()
     s->set_brightness(s, 0); // -2..2
   }
 
-  applyQuality(QUALITY_DEFAULT); // фактический стартовый уровень (буферы — UXGA)
+  applyQuality(g_quality); // стартовый уровень — из NVS (по умолчанию QUALITY_DEFAULT)
   return true;
 }
 
@@ -568,6 +605,7 @@ static esp_err_t set_handler(httpd_req_t *req)
     {
       if (applyQuality(atoi(val)))
       {
+        s_prefs.putUChar("quality", (uint8_t)g_quality);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
@@ -576,6 +614,7 @@ static esp_err_t set_handler(httpd_req_t *req)
     {
       g_lightOn = (atoi(val) != 0);
       applyLight();
+      s_prefs.putBool("light", g_lightOn);
       httpd_resp_set_type(req, "text/plain");
       return httpd_resp_send(req, "OK", 2);
     }
@@ -586,6 +625,7 @@ static esp_err_t set_handler(httpd_req_t *req)
       {
         g_lightColor = idx;
         applyLight();
+        s_prefs.putUChar("color", (uint8_t)idx);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
@@ -605,6 +645,7 @@ static esp_err_t set_handler(httpd_req_t *req)
       {
         g_motorSpeed = pct;
         applyMotors();
+        s_prefs.putUChar("speed", (uint8_t)pct);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
@@ -616,6 +657,7 @@ static esp_err_t set_handler(httpd_req_t *req)
       {
         g_motorTurnSpeed = pct;
         applyMotors();
+        s_prefs.putUChar("tspeed", (uint8_t)pct);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
@@ -754,8 +796,9 @@ static void startWebServer()
 // ================================ SETUP ===================================
 void setup()
 {
-  applyLight();  // светодиод гарантированно выключен с момента старта
-  initMotors();  // пины моторов в 0 — гусеницы не дёрнутся при старте
+  settingsLoad(); // настройки из NVS — до всех применений (свет/качество/мощности)
+  applyLight();   // применяем сохранённые свет и цвет
+  initMotors();   // пины моторов в 0 — гусеницы не дёрнутся при старте
 
   if (!initCamera())
   {
