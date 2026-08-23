@@ -1,8 +1,9 @@
 # CLAUDE.md
 
-Проект PlatformIO (Arduino): плата на модуле **ESP32-S3 N16R8** + съёмный модуль
-камеры **OV2640** от классической ESP32-CAM. Камера стримит MJPEG на веб-страницу
-по WiFi. Один исходник — `src/main.cpp`.
+**WiFiCamBot** — проект PlatformIO (Arduino): плата на модуле **ESP32-S3 N16R8** +
+съёмный модуль камеры **OV2640** от классической ESP32-CAM. Камера стримит MJPEG
+на веб-страницу по WiFi. Один исходник — `src/main.cpp`. Каталог проекта —
+`WiFiCamBot` (переименован из `ESP32S3_Cam_LiveStream`).
 
 ## Команды
 
