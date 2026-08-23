@@ -11,6 +11,8 @@
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
  *
+ * Плюс приём прошивки по WiFi (ArduinoOTA, порт 3232) — см. setup().
+ *
  * Данные WiFi — в src/wifi_secrets.h (в git не попадает, см. .gitignore;
  * образец — wifi_secrets.h.example).
  */
@@ -18,6 +20,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <ArduinoOTA.h>
 #include "esp_camera.h"
 #include "esp_http_server.h"
 #include "driver/rmt.h"
@@ -531,11 +534,43 @@ void setup()
   }
 
   startWebServer();
+
+  // ========================= OTA-ОБНОВЛЕНИЕ ПРОШИВКИ =======================
+  // Приём прошивки по WiFi (ArduinoOTA, UDP-порт 3232): после первой прошивки
+  // по USB дальше можно шить без провода — pio run -e ota -t upload
+  // (env «ota» в platformio.ini; адрес платы — esp32cam.local или её IP).
+  // Собственный mDNS у библиотеки отключён: наш MDNS.begin уже поднят выше,
+  // а повторный MDNS.begin() внутри ArduinoOTA.begin() сбросил бы имя хоста
+  // и службу «http» — службу OTA регистрируем сами, в уже работающий mDNS.
+  ArduinoOTA.setMdnsEnabled(false);
+#ifdef OTA_PASSWORD
+  ArduinoOTA.setPassword(OTA_PASSWORD); // пароль задан — без него прошить нельзя
+#endif
+  // Индикация на RGB-светодиоде (Serial-отладки на этой плате нет): синий —
+  // начало приёма, от красного к зелёному — прогресс, зелёный — успех (плата
+  // сама перезагружается), красный — ошибка.
+  ArduinoOTA.onStart([]() { wsSendColor(0, 0, 255); });
+  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
+    unsigned int pct = total ? done * 100 / total : 0;
+    wsSendColor((uint8_t)(255 - 255 * pct / 100),
+                (uint8_t)(255 * pct / 100), 0);
+  });
+  ArduinoOTA.onEnd([]() { wsSendColor(0, 255, 0); });
+  ArduinoOTA.onError([](ota_error_t) { wsSendColor(255, 0, 0); });
+  ArduinoOTA.begin();
+#ifdef OTA_PASSWORD
+  MDNS.enableArduino(3232, true); // служба _arduino._tcp для Arduino IDE / PlatformIO
+#else
+  MDNS.enableArduino(3232);
+#endif
 }
 
 // ================================= LOOP ===================================
-// Всё обслуживание идёт в потоках httpd — здесь делать нечего.
+// Обслуживание страницы и стрима идёт в потоках httpd — здесь только приём
+// OTA-прошивки. Во время обновления стрим может подтормаживать: запись во
+// flash на время стирания сектора останавливает оба ядра — это нормально.
 void loop()
 {
+  ArduinoOTA.handle();
   delay(100);
 }

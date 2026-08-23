@@ -7,9 +7,10 @@
 ## Команды
 
 ```bash
-pio run -d .                 # сборка
-pio run -d . -t upload       # прошивка (плата по USB, порт /dev/ttyACM0)
-pio device monitor -d .      # монитор порта (115200)
+pio run -d .                  # сборка
+pio run -d . -t upload        # прошивка (плата по USB, порт /dev/ttyACM0)
+pio run -d . -e ota -t upload # прошивка по WiFi — ArduinoOTA (esp32cam.local)
+pio device monitor -d .       # монитор порта (115200)
 ```
 
 ## Железо и критичные решения
@@ -63,6 +64,19 @@ pio device monitor -d .      # монитор порта (115200)
 - Страница поворачивает кадр на 90° по часовой стрелке средствами CSS
   (`.stage` с аспектом 3:4, угол меняется в `INDEX_HTML`).
 - Камера: JPEG, 2 буфера в PSRAM, `CAMERA_GRAB_LATEST`.
+- **OTA-прошивка по WiFi** — ArduinoOTA (встроен в ядро, UDP-порт 3232): init в
+  `setup()` после `startWebServer()`, `ArduinoOTA.handle()` в `loop()`. mDNS у
+  библиотеки отключён (`setMdnsEnabled(false)`): её `begin()` поднял бы второй
+  mDNS и сломал `esp32cam.local` — служба `_arduino._tcp` добавляется вручную
+  через `MDNS.enableArduino(3232)` в уже работающий mDNS. Прогресс обновления
+  дублируется RGB-светодиодом (`onStart`/`onProgress`/`onEnd`/`onError` —
+  Serial-отладки на плате нет). Пароль необязателен: `OTA_PASSWORD` в
+  `wifi_secrets.h` + `upload_flags = --auth=…` в env `ota`. Прошивание — env
+  `ota` в `platformio.ini` (`upload_protocol = espota`); `default_envs =
+  esp32s3_cam`, чтобы `pio run -t upload` без `-e` не лез по сети. Разделы
+  `ota_0`/`ota_1` уже есть в `default_16MB.csv` — таблицу разделов не менять.
+  Проверено на железе: OTA при открытом стриме работает (кадры замирают на
+  время записи, потом всё продолжает).
 
 ## Подводные камни (проверено на этой версии ядра)
 
@@ -85,6 +99,9 @@ pio device monitor -d .      # монитор порта (115200)
   чистым сбросом: `python3 ~/.platformio/packages/tool-esptoolpy/esptool.py
   --port /dev/ttyACM0 --chip esp32s3 --after hard_reset chip_id` и ожиданием
   ~30 с. Порт без нужды не открывать.
+- OTA и USB-прошивку можно чередовать без «старого слота»: после OTA плата
+  грузится из `ota_1`, но USB-заливка pio пишет и `boot_app0.bin` (otadata),
+  возвращая загрузку на `ota_0`.
 
 ## Стиль
 
