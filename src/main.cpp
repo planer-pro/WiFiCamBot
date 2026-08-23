@@ -40,7 +40,7 @@
 #include "driver/ledc.h"
 #include "wifi_secrets.h"
 
-#define HOSTNAME "esp32cam" // адрес будет http://esp32cam.local/
+#define HOSTNAME "wificambot" // адрес будет http://wificambot.local/
 
 // ============================= НАСТРОЙКИ WiFi =============================
 // Сеть выбирается и запоминается через WiFiManager: если подключиться не
@@ -927,7 +927,7 @@ void setup()
   // ========================= OTA-ОБНОВЛЕНИЕ ПРОШИВКИ =======================
   // Приём прошивки по WiFi (ArduinoOTA, UDP-порт 3232): после первой прошивки
   // по USB дальше можно шить без провода — pio run -e ota -t upload
-  // (env «ota» в platformio.ini; адрес платы — esp32cam.local или её IP).
+  // (env «ota» в platformio.ini; адрес платы — wificambot.local или её IP).
   // Собственный mDNS у библиотеки отключён: наш MDNS.begin уже поднят выше,
   // а повторный MDNS.begin() внутри ArduinoOTA.begin() сбросил бы имя хоста
   // и службу «http» — службу OTA регистрируем сами, в уже работающий mDNS.

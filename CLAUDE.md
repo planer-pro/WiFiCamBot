@@ -10,7 +10,7 @@
 ```bash
 pio run -d .                  # сборка
 pio run -d . -t upload        # прошивка (плата по USB, порт /dev/ttyACM0)
-pio run -d . -e ota -t upload # прошивка по WiFi — ArduinoOTA (esp32cam.local)
+pio run -d . -e ota -t upload # прошивка по WiFi — ArduinoOTA (wificambot.local)
 pio device monitor -d .       # монитор порта (115200)
 ```
 
@@ -75,7 +75,7 @@ SD-карта и проводной последовательный порт н
 - **WiFi — через WiFiManager** (`connectWiFi()` в `setup()`): подключение к
   сети, сохранённой в NVS; не удалось за 20 с — `wm.autoConnect(WIFI_AP_NAME)`
   поднимает настроечную точку доступа (имя — `WIFI_AP_NAME` в
-  `wifi_secrets.h`, у нас `esp32cam-setup`) с captive-порталом выбора сети;
+  `wifi_secrets.h`, у нас `wificambot-setup`) с captive-порталом выбора сети;
   выбранное сохраняется в NVS, портал без действий 3 мин — перезапуск.
   Учётные данные сети в `wifi_secrets.h` НЕ задаются (убраны по просьбе
   пользователя) — там только имя AP и опциональный пароль OTA.
@@ -90,7 +90,7 @@ SD-карта и проводной последовательный порт н
   этого сервера не обслуживаются — из-за этого «не работали» кнопка света и
   качество; проверено на железе). Страница строит абсолютный URL стрима
   `http://<host>:81/stream` в JS — относительной ссылки на другой порт нет.
-  Стрим можно открыть и напрямую (VLC и т.п.): `http://esp32cam.local:81/stream`.
+  Стрим можно открыть и напрямую (VLC и т.п.): `http://wificambot.local:81/stream`.
 - Качество (разрешение + jpeg_quality) — таблица пресетов `QUALITY_PRESETS`,
   применяется на лету `applyQuality()` без переинициализации камеры. Пресеты
   только 4:3 — из-за CSS-поворота страницы.
@@ -129,7 +129,7 @@ SD-карта и проводной последовательный порт н
 - **OTA-прошивка по WiFi** — ArduinoOTA (встроен в ядро, UDP-порт 3232): init в
   `setup()` после `startWebServer()`, `ArduinoOTA.handle()` в `loop()`. mDNS у
   библиотеки отключён (`setMdnsEnabled(false)`): её `begin()` поднял бы второй
-  mDNS и сломал `esp32cam.local` — служба `_arduino._tcp` добавляется вручную
+  mDNS и сломал `wificambot.local` — служба `_arduino._tcp` добавляется вручную
   через `MDNS.enableArduino(3232)` в уже работающий mDNS. Прогресс обновления
   дублируется RGB-светодиодом (`onStart`/`onProgress`/`onEnd`/`onError` —
   Serial-отладки на плате нет). Пароль необязателен: `OTA_PASSWORD` в
