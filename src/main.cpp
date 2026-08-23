@@ -12,12 +12,16 @@
  *                    l/r поворот влево/вправо (разворот на месте), s стоп
  *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100)
  *   /set?tspeed=N  — мощность поворотов, % (1..100) — отдельно от хода
+ *   /set?accel=N   — разгон моторов вперёд/назад, мс от нуля до полной
+ *                    мощности (0 — отключено; варианты — MOTOR_ACCEL_STEPS)
+ *   /set?taccel=N  — разгон поворотов, мс (отдельно от хода)
  *   /stream        — MJPEG-поток (multipart/x-mixed-replace), ОТДЕЛЬНЫЙ
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
  *
- * Настройки (качество, свет+цвет, обе мощности) сохраняются в NVS при каждом
- * изменении и восстанавливаются при включении питания — см. settingsLoad().
+ * Настройки (качество, свет+цвет, мощности, разгоны) сохраняются в NVS при
+ * каждом изменении и восстанавливаются при включении питания — см.
+ * settingsLoad().
  *
  * Плюс приём прошивки по WiFi (ArduinoOTA, порт 3232) — см. setup().
  *
@@ -211,6 +215,9 @@ static void applyLight()
 // 0 — так выбирается направление. Повороты l/r — разворот на месте (гусеницы
 // в противоположные стороны). Если гусеница крутится не в ту сторону —
 // поменяйте местами пару пинов её канала (IN1<->IN2 или IN3<->IN4).
+// Разгон — плавный набор мощности при старте (свой для хода и поворотов,
+// 0 = отключено): рост скважности растянут на N мс, а стоп и ЛЮБОЕ снижение
+// мощности всегда мгновенные — торможение не должно зависеть от настроек.
 // ПИНЫ ПОДКЛЮЧЕНИЯ — поменяйте под свою проводку (камере эти пины не нужны).
 #define MOTOR_L_IN1_GPIO 1  // MX1508 IN1: левый мотор, вперёд
 #define MOTOR_L_IN2_GPIO 2  // MX1508 IN2: левый мотор, назад
@@ -221,10 +228,32 @@ static void applyLight()
 #define MOTOR_PWM_MAX 1023        // максимум duty при 10 битах
 #define MOTOR_CMD_TIMEOUT_MS 1500 // нет команд так долго — стоп (обрыв WiFi)
 
+// Варианты разгона, мс от нуля до полной мощности (0 — отключено, старт
+// сразу на полную). Порядок совпадает с <option> селектов в INDEX_HTML.
+static const uint16_t MOTOR_ACCEL_STEPS[] = {0, 200, 500, 1000, 2000};
+#define MOTOR_ACCEL_DEFAULT 500
+
+static bool accelValid(int ms)
+{
+  for (int i = 0; i < (int)(sizeof(MOTOR_ACCEL_STEPS) / sizeof(MOTOR_ACCEL_STEPS[0])); i++)
+  {
+    if ((int)MOTOR_ACCEL_STEPS[i] == ms)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
 static volatile char g_motorCmd = 's';      // f | b | l | r | s
 static volatile int g_motorSpeed = 100;     // мощность вперёд/назад, %
 static volatile int g_motorTurnSpeed = 100; // мощность поворотов, % (отдельно)
+static volatile uint16_t g_accelMs = MOTOR_ACCEL_DEFAULT;     // разгон хода
+static volatile uint16_t g_turnAccelMs = MOTOR_ACCEL_DEFAULT; // разгон поворотов
 static volatile uint32_t g_motorLastMs = 0;
+static uint32_t g_chDuty[4] = {0, 0, 0, 0};   // текущая скважность каналов
+static uint32_t g_chTarget[4] = {0, 0, 0, 0}; // цель по команде/мощности
+static volatile uint16_t g_chAccelMs = MOTOR_ACCEL_DEFAULT; // разгон активной команды
 
 // Duty в один канал ШИМ моторов. Каналы 1-4 на таймере 1: канал 0 и таймер 0
 // заняты камерой (XCLK) — их трогать нельзя.
@@ -262,18 +291,72 @@ static void initMotors()
   }
 }
 
+// Считает целевую скважность каналов по команде/мощности и применяет её:
+// рост — оставляется на разгон (motorsTick в loop), если он включён;
+// отключённый разгон и ЛЮБОЕ снижение (включая стоп) — применяются сразу.
 static void applyMotors()
 {
-  // ход и повороты — с раздельной мощностью (поворот на месте обычно
-  // требует другой мощности, чем езда вперёд/назад)
+  // ход и повороты — с раздельной мощностью и раздельным разгоном
+  // (поворот на месте обычно требует другой мощности, чем езда)
   bool turn = (g_motorCmd == 'l' || g_motorCmd == 'r');
   int pct = turn ? g_motorTurnSpeed : g_motorSpeed;
+  g_chAccelMs = turn ? g_turnAccelMs : g_accelMs;
   uint32_t duty = (uint32_t)MOTOR_PWM_MAX * pct / 100;
   char c = g_motorCmd;
-  motorDuty(LEDC_CHANNEL_1, (c == 'f' || c == 'r') ? duty : 0); // левый вперёд
-  motorDuty(LEDC_CHANNEL_2, (c == 'b' || c == 'l') ? duty : 0); // левый назад
-  motorDuty(LEDC_CHANNEL_3, (c == 'f' || c == 'l') ? duty : 0); // правый вперёд
-  motorDuty(LEDC_CHANNEL_4, (c == 'b' || c == 'r') ? duty : 0); // правый назад
+  const bool active[4] = {
+      (c == 'f' || c == 'r'), // левый вперёд
+      (c == 'b' || c == 'l'), // левый назад
+      (c == 'f' || c == 'l'), // правый вперёд
+      (c == 'b' || c == 'r')  // правый назад
+  };
+  for (int i = 0; i < 4; i++)
+  {
+    g_chTarget[i] = active[i] ? duty : 0;
+    if (g_chAccelMs == 0 || g_chTarget[i] < g_chDuty[i])
+    {
+      g_chDuty[i] = g_chTarget[i];
+    }
+    motorDuty((ledc_channel_t)(LEDC_CHANNEL_1 + i), g_chDuty[i]);
+  }
+}
+
+// Шаг разгона — вызывается из loop() с прошествием dt: плавно ведёт
+// скважность вверх к цели (только вверх — снижение applyMotors делает сразу).
+static void motorsTick(uint32_t dtMs)
+{
+  if (g_chAccelMs == 0)
+  {
+    return; // разгон отключён — всё применяется мгновенно в applyMotors
+  }
+  if (dtMs > 100)
+  {
+    dtMs = 100; // защита от пропусков цикла и самого первого вызова
+  }
+  uint32_t step = (uint32_t)MOTOR_PWM_MAX * dtMs / g_chAccelMs;
+  if (step == 0)
+  {
+    step = 1; // даже самый медленный разгон понемногу двигается
+  }
+  bool changed = false;
+  for (int i = 0; i < 4; i++)
+  {
+    if (g_chDuty[i] < g_chTarget[i])
+    {
+      g_chDuty[i] += step;
+      if (g_chDuty[i] > g_chTarget[i])
+      {
+        g_chDuty[i] = g_chTarget[i];
+      }
+      changed = true;
+    }
+  }
+  if (changed)
+  {
+    for (int i = 0; i < 4; i++)
+    {
+      motorDuty((ledc_channel_t)(LEDC_CHANNEL_1 + i), g_chDuty[i]);
+    }
+  }
 }
 
 static bool motorCommand(char c)
@@ -326,6 +409,11 @@ static void settingsLoad()
   g_motorSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
   sp = (int)s_prefs.getUChar("tspeed", 100);
   g_motorTurnSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
+
+  int a = (int)s_prefs.getUShort("accel", MOTOR_ACCEL_DEFAULT);
+  g_accelMs = accelValid(a) ? (uint16_t)a : MOTOR_ACCEL_DEFAULT;
+  a = (int)s_prefs.getUShort("taccel", MOTOR_ACCEL_DEFAULT);
+  g_turnAccelMs = accelValid(a) ? (uint16_t)a : MOTOR_ACCEL_DEFAULT;
 }
 
 // ========================= СТРАНИЦА И СТРИМ ===============================
@@ -447,12 +535,28 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="75">75%</option>
   <option value="100">100%</option>
 </select>
+<span class="lbl">Разгон: вперёд/назад</span>
+<select id="accel">
+  <option value="0">отключено</option>
+  <option value="200">0.2 с</option>
+  <option value="500">0.5 с</option>
+  <option value="1000">1 с</option>
+  <option value="2000">2 с</option>
+</select>
 <span class="lbl">Мощность: повороты</span>
 <select id="tspeed">
   <option value="25">25%</option>
   <option value="50">50%</option>
   <option value="75">75%</option>
   <option value="100">100%</option>
+</select>
+<span class="lbl">Разгон: повороты</span>
+<select id="taccel">
+  <option value="0">отключено</option>
+  <option value="200">0.2 с</option>
+  <option value="500">0.5 с</option>
+  <option value="1000">1 с</option>
+  <option value="2000">2 с</option>
 </select>
 </div>
 </div>
@@ -610,6 +714,15 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   var turnSel = document.getElementById('tspeed');
   applySelectValue(turnSel, '@T@');
   turnSel.onchange = function () { fetch('/set?tspeed=' + turnSel.value); };
+  // Разгон: время плавного набора мощности от нуля при старте (0 — отключено,
+  // сразу на полную). Стоп всегда мгновенный. Список значений обязан
+  // совпадать с таблицей MOTOR_ACCEL_STEPS в прошивке.
+  var accelSel = document.getElementById('accel');
+  accelSel.value = '@A@';
+  accelSel.onchange = function () { fetch('/set?accel=' + accelSel.value); };
+  var tAccelSel = document.getElementById('taccel');
+  tAccelSel.value = '@B@';
+  tAccelSel.onchange = function () { fetch('/set?taccel=' + tAccelSel.value); };
   motorUI();
 </script>
 </body>
@@ -771,6 +884,30 @@ static esp_err_t set_handler(httpd_req_t *req)
         return httpd_resp_send(req, "OK", 2);
       }
     }
+    else if (httpd_query_key_value(query, "accel", val, sizeof(val)) == ESP_OK)
+    {
+      int ms = atoi(val);
+      if (accelValid(ms))
+      {
+        g_accelMs = (uint16_t)ms;
+        applyMotors();
+        s_prefs.putUShort("accel", (uint16_t)ms);
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
+    else if (httpd_query_key_value(query, "taccel", val, sizeof(val)) == ESP_OK)
+    {
+      int ms = atoi(val);
+      if (accelValid(ms))
+      {
+        g_turnAccelMs = (uint16_t)ms;
+        applyMotors();
+        s_prefs.putUShort("taccel", (uint16_t)ms);
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
   }
   httpd_resp_send_404(req);
   return ESP_FAIL;
@@ -781,24 +918,26 @@ static esp_err_t index_handler(httpd_req_t *req)
   httpd_resp_set_type(req, "text/html");
   // страницу не кэшировать: после перепрошивки JS должен обновиться
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@/@T@/@R@ в странице
-  const char *marks[6] = {"@Q@", "@L@", "@C@", "@S@", "@T@", "@R@"};
-  char qbuf[4], lbuf[4], cbuf[4], sbuf[4], tbuf[4], rbuf[4];
-  const char *vals[6] = {qbuf, lbuf, cbuf, sbuf, tbuf, rbuf};
-  int lens[6] = {
+  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@/@T@/@R@/@A@/@B@
+  const char *marks[8] = {"@Q@", "@L@", "@C@", "@S@", "@T@", "@R@", "@A@", "@B@"};
+  char qbuf[4], lbuf[4], cbuf[4], sbuf[4], tbuf[4], rbuf[4], abuf[8], bbuf[8];
+  const char *vals[8] = {qbuf, lbuf, cbuf, sbuf, tbuf, rbuf, abuf, bbuf};
+  int lens[8] = {
       snprintf(qbuf, sizeof(qbuf), "%d", (int)g_quality),
       snprintf(lbuf, sizeof(lbuf), "%d", g_lightOn ? 1 : 0),
       snprintf(cbuf, sizeof(cbuf), "%d", (int)g_lightColor),
       snprintf(sbuf, sizeof(sbuf), "%d", (int)g_motorSpeed),
       snprintf(tbuf, sizeof(tbuf), "%d", (int)g_motorTurnSpeed),
-      snprintf(rbuf, sizeof(rbuf), "%d", (int)g_rotation)};
+      snprintf(rbuf, sizeof(rbuf), "%d", (int)g_rotation),
+      snprintf(abuf, sizeof(abuf), "%d", (int)g_accelMs),
+      snprintf(bbuf, sizeof(bbuf), "%d", (int)g_turnAccelMs)};
   const char *p = INDEX_HTML;
   while (*p)
   {
     // ищем ближайшую метку от текущей позиции
     const char *best = NULL;
     int bi = -1;
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 8; i++)
     {
       if (lens[i] <= 0)
         continue;
@@ -989,5 +1128,12 @@ void loop()
   {
     motorCommand('s');
   }
-  delay(100);
+
+  // Разгон моторов: плавно ведём скважность к цели. Частый цикл (20 мс) —
+  // ради мелких шагов разгона; приёму OTA и контролю связи он не мешает.
+  static uint32_t motorLastTick = 0;
+  uint32_t now = millis();
+  motorsTick(now - motorLastTick);
+  motorLastTick = now;
+  delay(20);
 }
