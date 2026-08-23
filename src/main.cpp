@@ -338,6 +338,9 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
      на узких экранах панель уходит под видео. */
   .row { display: flex; gap: 12px; justify-content: center;
          align-items: stretch; }
+  /* Колонка «видео + пульт»: пульт центрируется относительно видео,
+     а не всей страницы (панель настроек сбоку видео больше не сдвигает). */
+  .col { display: flex; flex-direction: column; align-items: center; }
   .panel { display: flex; flex-direction: column; gap: 6px;
            width: 180px; flex: none; }
   .panel .lbl { font-size: 12px; color: #aaa; text-align: left;
@@ -354,7 +357,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
      touch-action и запрет выделения — чтобы кнопка не скроллила страницу
      и не выделялась «подсветкой» при удержании. */
   .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
-         max-width: 280px; margin: 10px auto 0; }
+         width: 100%; max-width: 280px; margin: 10px 0 0; }
   .pad button { height: 50px; font-size: 18px; user-select: none;
                 -webkit-user-select: none; touch-action: none; }
   .pad button.on { background: #060; border-color: #4c6; color: #fff; }
@@ -362,7 +365,13 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
 <div class="row">
+<div class="col">
 <div class="stage" id="stage"><img id="stream" alt="видеопоток"></div>
+<div class="pad" id="pad">
+  <span></span><button data-dir="f">&#9650; W</button><span></span>
+  <button data-dir="l">&#9664; A</button><button data-dir="b">&#9660; S</button><button data-dir="r">&#9654; D</button>
+</div>
+</div>
 <div class="panel">
 <span class="lbl">Качество</span>
 <select id="quality">
@@ -408,10 +417,6 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="100">100%</option>
 </select>
 </div>
-</div>
-<div class="pad" id="pad">
-  <span></span><button data-dir="f">&#9650; W</button><span></span>
-  <button data-dir="l">&#9664; A</button><button data-dir="b">&#9660; S</button><button data-dir="r">&#9654; D</button>
 </div>
 <script>
   // Стрим обслуживает ОТДЕЛЬНЫЙ сервер на порту 81 (бесконечный /stream
