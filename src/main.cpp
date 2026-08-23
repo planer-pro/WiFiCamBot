@@ -7,6 +7,9 @@
  *   /set?quality=N — качество: 0 мин. … 4 макс. (меняется на лету)
  *   /set?light=0|1 — RGB-светодиод платы: выключен / включён
  *   /set?color=N   — цвет светодиода (таблица LIGHT_COLORS, 0 = белый)
+ *   /set?motor=X   — моторы гусениц (MX1508): f вперёд, b назад,
+ *                    l/r поворот влево/вправо (разворот на месте), s стоп
+ *   /set?speed=N   — мощность моторов, % (1..100)
  *   /stream        — MJPEG-поток (multipart/x-mixed-replace), ОТДЕЛЬНЫЙ
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
@@ -24,6 +27,7 @@
 #include "esp_camera.h"
 #include "esp_http_server.h"
 #include "driver/rmt.h"
+#include "driver/ledc.h"
 #include "wifi_secrets.h"
 
 #define HOSTNAME "esp32cam" // адрес будет http://esp32cam.local/
@@ -152,6 +156,84 @@ static void applyLight()
   wsSendColor(g_lightOn ? c.r : 0, g_lightOn ? c.g : 0, g_lightOn ? c.b : 0);
 }
 
+// ====================== МОТОРЫ ГУСЕНИЦ (MX1508) ===========================
+// Драйвер MX1508 — два канала: A (IN1/IN2) — левая гусеница, B (IN3/IN4) —
+// правая. Танковая схема: ШИМ подаётся на один вход канала, второй при этом
+// 0 — так выбирается направление. Повороты l/r — разворот на месте (гусеницы
+// в противоположные стороны). Если гусеница крутится не в ту сторону —
+// поменяйте местами пару пинов её канала (IN1<->IN2 или IN3<->IN4).
+// ПИНЫ ПОДКЛЮЧЕНИЯ — поменяйте под свою проводку (камере эти пины не нужны).
+#define MOTOR_L_IN1_GPIO 1  // MX1508 IN1: левый мотор, вперёд
+#define MOTOR_L_IN2_GPIO 2  // MX1508 IN2: левый мотор, назад
+#define MOTOR_R_IN1_GPIO 3  // MX1508 IN3: правый мотор, вперёд
+#define MOTOR_R_IN2_GPIO 14 // MX1508 IN4: правый мотор, назад
+#define MOTOR_PWM_FREQ_HZ 20000   // выше слышимого диапазона — моторы не «пищат»
+#define MOTOR_PWM_RES LEDC_TIMER_10_BIT
+#define MOTOR_PWM_MAX 1023        // максимум duty при 10 битах
+#define MOTOR_CMD_TIMEOUT_MS 1500 // нет команд так долго — стоп (обрыв WiFi)
+
+static volatile char g_motorCmd = 's';  // f | b | l | r | s
+static volatile int g_motorSpeed = 100; // мощность, %
+static volatile uint32_t g_motorLastMs = 0;
+
+// Duty в один канал ШИМ моторов. Каналы 1-4 на таймере 1: канал 0 и таймер 0
+// заняты камерой (XCLK) — их трогать нельзя.
+static void motorDuty(ledc_channel_t ch, uint32_t duty)
+{
+  ledc_set_duty(LEDC_LOW_SPEED_MODE, ch, duty);
+  ledc_update_duty(LEDC_LOW_SPEED_MODE, ch);
+}
+
+static void initMotors()
+{
+  ledc_timer_config_t timer = {};
+  timer.speed_mode = LEDC_LOW_SPEED_MODE;
+  timer.timer_num = LEDC_TIMER_1;
+  timer.duty_resolution = MOTOR_PWM_RES;
+  timer.freq_hz = MOTOR_PWM_FREQ_HZ;
+  timer.clk_cfg = LEDC_AUTO_CLK;
+  if (ledc_timer_config(&timer) != ESP_OK)
+  {
+    return; // без ШИМ моторы не поедут
+  }
+
+  const int pins[] = {MOTOR_L_IN1_GPIO, MOTOR_L_IN2_GPIO,
+                      MOTOR_R_IN1_GPIO, MOTOR_R_IN2_GPIO};
+  for (int i = 0; i < 4; i++)
+  {
+    ledc_channel_config_t ch = {};
+    ch.gpio_num = pins[i];
+    ch.speed_mode = LEDC_LOW_SPEED_MODE;
+    ch.channel = (ledc_channel_t)(LEDC_CHANNEL_1 + i);
+    ch.intr_type = LEDC_INTR_DISABLE;
+    ch.timer_sel = LEDC_TIMER_1;
+    ch.duty = 0; // на старте моторы гарантированно выключены
+    ledc_channel_config(&ch);
+  }
+}
+
+static void applyMotors()
+{
+  uint32_t duty = (uint32_t)MOTOR_PWM_MAX * g_motorSpeed / 100;
+  char c = g_motorCmd;
+  motorDuty(LEDC_CHANNEL_1, (c == 'f' || c == 'r') ? duty : 0); // левый вперёд
+  motorDuty(LEDC_CHANNEL_2, (c == 'b' || c == 'l') ? duty : 0); // левый назад
+  motorDuty(LEDC_CHANNEL_3, (c == 'f' || c == 'l') ? duty : 0); // правый вперёд
+  motorDuty(LEDC_CHANNEL_4, (c == 'b' || c == 'r') ? duty : 0); // правый назад
+}
+
+static bool motorCommand(char c)
+{
+  if (c != 'f' && c != 'b' && c != 'l' && c != 'r' && c != 's')
+  {
+    return false;
+  }
+  g_motorCmd = c;
+  g_motorLastMs = millis();
+  applyMotors();
+  return true;
+}
+
 // ========================= СТРАНИЦА И СТРИМ ===============================
 #define STREAM_BOUNDARY "123456789000000000000987654321"
 static const char STREAM_CONTENT_TYPE[] =
@@ -196,6 +278,14 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     border: 1px solid #444;
     background: #000;
   }
+  /* Пульт гусениц: кнопки или клавиши (стрелки / WASD), удерживать.
+     touch-action и запрет выделения — чтобы кнопка не скроллила страницу
+     и не выделялась «подсветкой» при удержании. */
+  .pad { display: grid; grid-template-columns: repeat(3, 76px); gap: 8px;
+         justify-content: center; margin: 14px auto; }
+  .pad button { height: 54px; font-size: 18px; user-select: none;
+                -webkit-user-select: none; touch-action: none; }
+  .pad button.on { background: #060; border-color: #4c6; color: #fff; }
 </style>
 </head>
 <body>
@@ -224,6 +314,20 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="7">пурпурный</option>
 </select>
 </p>
+<p>
+Мощность моторов:
+<select id="speed">
+  <option value="25">25%</option>
+  <option value="50">50%</option>
+  <option value="75">75%</option>
+  <option value="100">100%</option>
+</select>
+</p>
+<p>Движение: кнопки или клавиши (стрелки / W A S D) — удерживать</p>
+<div class="pad" id="pad">
+  <span></span><button data-dir="f">&#9650; W</button><span></span>
+  <button data-dir="l">&#9664; A</button><button data-dir="b">&#9660; S</button><button data-dir="r">&#9654; D</button>
+</div>
 <script>
   // Стрим обслуживает ОТДЕЛЬНЫЙ сервер на порту 81 (бесконечный /stream
   // блокирует поток httpd, а с ним и /set на порту 80 — см. startWebServer).
@@ -260,6 +364,87 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   };
   colorSel.onchange = function () { fetch('/set?color=' + colorSel.value); };
   lightLabel();
+  // Моторы MX1508 (танковая схема). Управление: кнопки пульта или клавиши
+  // (стрелки / WASD) — удерживать. Пока направление удерживается, команда
+  // повторяется каждые 500 мс: если связь оборвётся, плата сама остановит
+  // моторы по таймауту команды (MOTOR_CMD_TIMEOUT_MS).
+  var KEY2DIR = {ArrowUp: 'f', KeyW: 'f', ArrowDown: 'b', KeyS: 'b',
+                 ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r'};
+  var motorDir = 's'; // последняя отправленная команда
+  var stack = [];     // удерживаемые направления, последнее — активное
+  var keepalive = null;
+  var padBtns = document.querySelectorAll('#pad button[data-dir]');
+  function sendMotor(d) { fetch('/set?motor=' + d); }
+  function motorUI()
+  {
+    for (var i = 0; i < padBtns.length; i++)
+      padBtns[i].className =
+          padBtns[i].getAttribute('data-dir') === motorDir ? 'on' : '';
+  }
+  function applyTop()
+  {
+    var d = stack.length ? stack[stack.length - 1] : 's';
+    if (d === motorDir)
+      return;
+    motorDir = d;
+    sendMotor(d);
+    clearInterval(keepalive);
+    keepalive = null;
+    if (d !== 's')
+      keepalive = setInterval(function () { sendMotor(motorDir); }, 500);
+    motorUI();
+  }
+  function motorPress(d)
+  {
+    if (stack.indexOf(d) < 0)
+      stack.push(d);
+    applyTop();
+  }
+  function motorRelease(d)
+  {
+    var i = stack.indexOf(d);
+    if (i >= 0)
+      stack.splice(i, 1);
+    applyTop();
+  }
+  Array.prototype.forEach.call(padBtns, function (b) {
+    var d = b.getAttribute('data-dir');
+    // preventDefault не даёт кнопке забрать фокус: иначе стрелки после
+    // клика мышью попали бы в кнопку, а не в управление моторами
+    b.addEventListener('pointerdown', function (ev) {
+      ev.preventDefault();
+      motorPress(d);
+    });
+    b.addEventListener('pointerup', function () { motorRelease(d); });
+    b.addEventListener('pointerleave', function () { motorRelease(d); });
+    b.addEventListener('pointercancel', function () { motorRelease(d); });
+    b.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+  });
+  document.addEventListener('keydown', function (ev) {
+    var d = KEY2DIR[ev.code]; // e.code — работает и в русской раскладке
+    if (!d)
+      return;
+    var t = ev.target && ev.target.tagName;
+    if (t === 'SELECT' || t === 'INPUT' || t === 'TEXTAREA')
+      return; // стрелки в выпадающем списке листают сам список
+    ev.preventDefault(); // без этого стрелки скроллят страницу
+    if (!ev.repeat)
+      motorPress(d);
+  });
+  document.addEventListener('keyup', function (ev) {
+    var d = KEY2DIR[ev.code];
+    if (d)
+      motorRelease(d);
+  });
+  // фокус ушёл из окна (Alt-Tab) или страница закрывается — моторы стоп
+  window.addEventListener('blur', function () { stack = []; applyTop(); });
+  window.addEventListener('pagehide', function () {
+    fetch('/set?motor=s', {keepalive: true});
+  });
+  var speedSel = document.getElementById('speed');
+  speedSel.value = '@S@';
+  speedSel.onchange = function () { fetch('/set?speed=' + speedSel.value); };
+  motorUI();
 </script>
 </body>
 </html>
@@ -374,6 +559,25 @@ static esp_err_t set_handler(httpd_req_t *req)
         return httpd_resp_send(req, "OK", 2);
       }
     }
+    else if (httpd_query_key_value(query, "motor", val, sizeof(val)) == ESP_OK)
+    {
+      if (motorCommand(val[0]))
+      {
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
+    else if (httpd_query_key_value(query, "speed", val, sizeof(val)) == ESP_OK)
+    {
+      int pct = atoi(val);
+      if (pct >= 1 && pct <= 100)
+      {
+        g_motorSpeed = pct;
+        applyMotors();
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
   }
   httpd_resp_send_404(req);
   return ESP_FAIL;
@@ -384,21 +588,22 @@ static esp_err_t index_handler(httpd_req_t *req)
   httpd_resp_set_type(req, "text/html");
   // страницу не кэшировать: после перепрошивки JS должен обновиться
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  // подставляем текущие значения вместо меток @Q@/@L@/@C@ в странице
-  const char *marks[3] = {"@Q@", "@L@", "@C@"};
-  char qbuf[4], lbuf[4], cbuf[4];
-  const char *vals[3] = {qbuf, lbuf, cbuf};
-  int lens[3] = {
+  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@ в странице
+  const char *marks[4] = {"@Q@", "@L@", "@C@", "@S@"};
+  char qbuf[4], lbuf[4], cbuf[4], sbuf[4];
+  const char *vals[4] = {qbuf, lbuf, cbuf, sbuf};
+  int lens[4] = {
       snprintf(qbuf, sizeof(qbuf), "%d", (int)g_quality),
       snprintf(lbuf, sizeof(lbuf), "%d", g_lightOn ? 1 : 0),
-      snprintf(cbuf, sizeof(cbuf), "%d", (int)g_lightColor)};
+      snprintf(cbuf, sizeof(cbuf), "%d", (int)g_lightColor),
+      snprintf(sbuf, sizeof(sbuf), "%d", (int)g_motorSpeed)};
   const char *p = INDEX_HTML;
   while (*p)
   {
     // ищем ближайшую метку от текущей позиции
     const char *best = NULL;
     int bi = -1;
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 4; i++)
     {
       if (lens[i] <= 0)
         continue;
@@ -506,7 +711,8 @@ static void startWebServer()
 // ================================ SETUP ===================================
 void setup()
 {
-  applyLight(); // светодиод гарантированно выключен с момента старта
+  applyLight();  // светодиод гарантированно выключен с момента старта
+  initMotors();  // пины моторов в 0 — гусеницы не дёрнутся при старте
 
   if (!initCamera())
   {
@@ -572,5 +778,12 @@ void setup()
 void loop()
 {
   ArduinoOTA.handle();
+  // Страховка от «залипания» команды: пока страница удерживает направление,
+  // она повторяет его каждые 500 мс; если повторов нет дольше таймаута
+  // (обрыв WiFi, закрыли вкладку) — моторы останавливаем сами.
+  if (g_motorCmd != 's' && millis() - g_motorLastMs > MOTOR_CMD_TIMEOUT_MS)
+  {
+    motorCommand('s');
+  }
   delay(100);
 }
