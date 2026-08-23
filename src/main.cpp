@@ -430,16 +430,35 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ESP32-S3 камера</title>
+<title>WiFiCamBot</title>
 <style>
-  body { font-family: sans-serif; background: #111; color: #eee;
-         margin: 0; padding: 8px; text-align: center; }
-  a   { color: #8cf; }
-  select { background: #222; color: #eee; border: 1px solid #444;
-           padding: 4px 8px; }
-  button { background: #222; color: #eee; border: 1px solid #444;
-           padding: 5px 14px; cursor: pointer; }
-  button.on { background: #a60; border-color: #fc5; color: #fff; }
+  :root {
+    --bg: #0b0d10; --card: #14171c; --field: #0f1216;
+    --border: #262c35; --border-hi: #3d4652;
+    --text: #e8eaed; --muted: #9aa3ad;
+    --accent: #55b2ff; --green: #2ecc71; --amber: #f5a623;
+  }
+  body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+         background: radial-gradient(120% 90% at 50% 0%, #131820 0%, var(--bg) 55%);
+         color: var(--text); margin: 0; padding: 10px; text-align: center; }
+  a   { color: var(--accent); }
+  /* Поля и кнопки — тёмные, скруглённые; у селектов своя стрелка
+     (нативная в тёмной теме рисуется то светлая, то тёмная) */
+  select { appearance: none; -webkit-appearance: none;
+           background-color: var(--field);
+           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239aa3ad' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+           background-repeat: no-repeat; background-position: right 9px center;
+           color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+           padding: 6px 26px 6px 9px; font-size: 13px; width: 100%;
+           cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+  select:hover { border-color: var(--border-hi); }
+  select:focus-visible { outline: none; border-color: var(--accent);
+                         box-shadow: 0 0 0 2px rgba(85, 178, 255, .25); }
+  button { background: var(--field); color: var(--text);
+           border: 1px solid var(--border); border-radius: 8px;
+           padding: 6px 14px; font-size: 13px; cursor: pointer;
+           transition: border-color .15s, background .15s, box-shadow .15s; }
+  button:hover { border-color: var(--border-hi); }
   /* Кадр 4:3 поворачивается на странице (список «Поворот кадра»: 0/90/180/
      270). Функция setRotation в JS пересчитывает аспект сцены и размер
      картинки под угол — повёрнутый кадр заполняет сцену целиком, без чёрных
@@ -447,7 +466,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
      умолчание 90° по часовой (камера на платформе стоит повёрнутой). */
   .stage {
     position: relative;
-    height: min(82vh, calc(100vh - 160px)); /* кадр + пульт под ним */
+    height: min(82vh, calc(100vh - 170px)); /* кадр + пульт под ним */
     aspect-ratio: 3 / 4;   /* пропорции повёрнутого кадра 4:3 */
     max-width: 100%;
   }
@@ -457,36 +476,58 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     left: 50%;
     width: 133.333%;       /* = высота сцены (4:3, повёрнуто на 90°) */
     transform: translate(-50%, -50%) rotate(90deg);
-    border: 1px solid #444;
+    border: 1px solid #2a313a;
+    border-radius: 12px;
     background: #000;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, .55);
   }
   /* Видео и панель управления — в одну строку, чтобы всё влезало на экран;
-     на узких экранах панель уходит под видео. */
-  .row { display: flex; gap: 12px; justify-content: center;
+     на узких экранах панель уходит под видео (группами в два столбца). */
+  .row { display: flex; gap: 14px; justify-content: center;
          align-items: stretch; }
   /* Колонка «видео + пульт»: пульт центрируется относительно видео,
      а не всей страницы (панель настроек сбоку видео больше не сдвигает). */
   .col { display: flex; flex-direction: column; align-items: center; }
-  .panel { display: flex; flex-direction: column; gap: 6px;
-           width: 180px; flex: none; }
-  .panel .lbl { font-size: 12px; color: #aaa; text-align: left;
-                margin: 6px 0 0; }
-  .panel select { width: 100%; box-sizing: border-box; font-size: 14px; }
-  .pair { display: flex; gap: 6px; }
+  /* Панель настроек — карточками-группами: Видео / Свет / Моторы */
+  .panel { display: flex; flex-direction: column; gap: 10px;
+           width: 210px; flex: none; }
+  .group { background: var(--card); border: 1px solid var(--border);
+           border-radius: 12px; padding: 10px 10px 11px;
+           display: flex; flex-direction: column; gap: 5px; text-align: left; }
+  .group .cap { font-size: 11px; font-weight: 600; letter-spacing: .08em;
+                text-transform: uppercase; color: var(--muted); margin: 0; }
+  .group .lbl { font-size: 11px; color: var(--muted); margin: 3px 0 0; }
+  .pair { display: flex; gap: 6px; align-items: center; }
   .pair select { flex: 1; min-width: 0; }
+  /* Кнопка света с точкой-индикатором выбранного цвета */
+  #light { display: inline-flex; align-items: center; gap: 7px; flex: none; }
+  .dot { width: 10px; height: 10px; border-radius: 50%;
+         border: 1px solid var(--muted); background: transparent; flex: none; }
+  button.on { background: #3a2b09; border-color: var(--amber); color: #ffd98a;
+              box-shadow: 0 0 12px rgba(245, 166, 35, .25); }
+  /* Моторы: мощности и разгоны — сетка 2x2, подписи над полями */
+  .mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 6px; }
   @media (max-width: 620px) {
     .row { flex-direction: column; align-items: center; }
     .stage { height: 55vh; }
-    .panel { width: min(320px, 100%); }
+    .panel { width: 100%; flex-direction: row; flex-wrap: wrap; }
+    .group { flex: 1 1 150px; }
   }
   /* Пульт гусениц: кнопки или клавиши (стрелки / WASD), удерживать.
      touch-action и запрет выделения — чтобы кнопка не скроллила страницу
      и не выделялась «подсветкой» при удержании. */
-  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
-         width: 100%; max-width: 280px; margin: 10px 0 0; }
-  .pad button { height: 50px; font-size: 18px; user-select: none;
-                -webkit-user-select: none; touch-action: none; }
-  .pad button.on { background: #060; border-color: #4c6; color: #fff; }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+         width: 100%; max-width: 280px; margin: 12px 0 0; }
+  .pad button { height: 54px; font-size: 17px; border-radius: 12px;
+                display: inline-flex; align-items: center;
+                justify-content: center; gap: 6px;
+                user-select: none; -webkit-user-select: none;
+                touch-action: none; }
+  .pad button .k { font-size: 11px; color: var(--muted); }
+  .pad button.on { background: #0e3b22; border-color: var(--green);
+                   color: #d9ffe8;
+                   box-shadow: 0 0 16px rgba(46, 204, 113, .3); }
+  .pad button.on .k { color: #93d8ab; }
 </style>
 </head>
 <body>
@@ -494,11 +535,13 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <div class="col">
 <div class="stage" id="stage"><img id="stream" alt="видеопоток"></div>
 <div class="pad" id="pad">
-  <span></span><button data-dir="f">&#9650; W</button><span></span>
-  <button data-dir="l">&#9664; A</button><button data-dir="b">&#9660; S</button><button data-dir="r">&#9654; D</button>
+  <span></span><button data-dir="f">&#9650;<span class="k">W</span></button><span></span>
+  <button data-dir="l">&#9664;<span class="k">A</span></button><button data-dir="b">&#9660;<span class="k">S</span></button><button data-dir="r">&#9654;<span class="k">D</span></button>
 </div>
 </div>
 <div class="panel">
+<div class="group">
+<span class="cap">Видео</span>
 <span class="lbl">Качество</span>
 <select id="quality">
   <option value="0">минимальное (QVGA 320x240)</option>
@@ -514,9 +557,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="180">180°</option>
   <option value="270">90° против часовой</option>
 </select>
-<span class="lbl">Свет</span>
+</div>
+<div class="group">
+<span class="cap">Свет</span>
 <div class="pair">
-<button id="light">вкл</button>
+<button id="light"><span class="dot" id="lightDot"></span><span id="lightTxt">вкл</span></button>
 <select id="color">
   <option value="0">белый</option>
   <option value="1">красный</option>
@@ -528,14 +573,24 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="7">пурпурный</option>
 </select>
 </div>
-<span class="lbl">Мощность: вперёд/назад</span>
+</div>
+<div class="group">
+<span class="cap">Моторы</span>
+<div class="mgrid">
+<span class="lbl">вперёд/назад</span><span class="lbl">повороты</span>
 <select id="speed">
   <option value="25">25%</option>
   <option value="50">50%</option>
   <option value="75">75%</option>
   <option value="100">100%</option>
 </select>
-<span class="lbl">Разгон: вперёд/назад</span>
+<select id="tspeed">
+  <option value="25">25%</option>
+  <option value="50">50%</option>
+  <option value="75">75%</option>
+  <option value="100">100%</option>
+</select>
+<span class="lbl">разгон</span><span class="lbl">разгон</span>
 <select id="accel">
   <option value="0">отключено</option>
   <option value="200">0.2 с</option>
@@ -543,14 +598,6 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="1000">1 с</option>
   <option value="2000">2 с</option>
 </select>
-<span class="lbl">Мощность: повороты</span>
-<select id="tspeed">
-  <option value="25">25%</option>
-  <option value="50">50%</option>
-  <option value="75">75%</option>
-  <option value="100">100%</option>
-</select>
-<span class="lbl">Разгон: повороты</span>
 <select id="taccel">
   <option value="0">отключено</option>
   <option value="200">0.2 с</option>
@@ -558,6 +605,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="1000">1 с</option>
   <option value="2000">2 с</option>
 </select>
+</div>
+</div>
 </div>
 </div>
 <script>
@@ -601,19 +650,30 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   // (список цветов тут и в таблице LIGHT_COLORS должен совпадать)
   var lightOn = ('@L@' === '1');
   var lightBtn = document.getElementById('light');
+  var lightTxt = document.getElementById('lightTxt');
+  var lightDot = document.getElementById('lightDot');
   var colorSel = document.getElementById('color');
   colorSel.value = '@C@';
+  // те же цвета, что в таблице LIGHT_COLORS прошивки — для точки-индикатора
+  var LED_COLORS = ['#ffffff', '#ff0000', '#ff3c00', '#ffa000',
+                    '#00ff00', '#00a0ff', '#0000ff', '#b400ff'];
   function lightLabel()
   {
-    lightBtn.textContent = lightOn ? 'вкл' : 'выкл';
+    var c = LED_COLORS[+colorSel.value] || LED_COLORS[0];
+    lightTxt.textContent = lightOn ? 'вкл' : 'выкл';
     lightBtn.className = lightOn ? 'on' : '';
+    lightDot.style.background = lightOn ? c : 'transparent';
+    lightDot.style.borderColor = c;
   }
   lightBtn.onclick = function () {
     lightOn = !lightOn;
     fetch('/set?light=' + (lightOn ? 1 : 0));
     lightLabel();
   };
-  colorSel.onchange = function () { fetch('/set?color=' + colorSel.value); };
+  colorSel.onchange = function () {
+    fetch('/set?color=' + colorSel.value);
+    lightLabel();
+  };
   lightLabel();
   // Моторы MX1508 (танковая схема). Управление: кнопки пульта или клавиши
   // (стрелки / WASD) — удерживать. Пока направление удерживается, команда
