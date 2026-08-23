@@ -7,6 +7,7 @@
  *   /set?quality=N — качество: 0 мин. … 4 макс. (меняется на лету)
  *   /set?light=0|1 — RGB-светодиод платы: выключен / включён
  *   /set?color=N   — цвет светодиода (таблица LIGHT_COLORS, 0 = белый)
+ *   /set?rot=N     — поворот кадра на странице: 0/90/180/270 градусов
  *   /set?motor=X   — моторы гусениц (MX1508): f вперёд, b назад,
  *                    l/r поворот влево/вправо (разворот на месте), s стоп
  *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100)
@@ -91,7 +92,12 @@ static const QualityPreset QUALITY_PRESETS[] = {
     {"максимальное (UXGA 1600x1200)", FRAMESIZE_UXGA, 6}};
 #define QUALITY_DEFAULT 2 // стартовый уровень
 
+// Угол поворота кадра на странице (CSS): 0 / 90 / 180 / 270 градусов.
+// Камера на платформе стоит повёрнутой — потому умолчание 90 (по часовой).
+#define ROTATION_DEFAULT 90
+
 static volatile int g_quality = QUALITY_DEFAULT;
+static volatile int g_rotation = ROTATION_DEFAULT;
 
 // Цвета подсветки для выпадающего списка на странице (/set?color=N).
 struct LightColor
@@ -262,6 +268,13 @@ static void settingsLoad()
   }
   g_quality = q;
 
+  int r = (int)s_prefs.getUChar("rot", ROTATION_DEFAULT);
+  if (r != 0 && r != 90 && r != 180 && r != 270)
+  {
+    r = ROTATION_DEFAULT;
+  }
+  g_rotation = r;
+
   g_lightOn = s_prefs.getBool("light", false);
 
   int c = (int)s_prefs.getUChar("color", LIGHT_COLOR_DEFAULT);
@@ -301,21 +314,22 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   button { background: #222; color: #eee; border: 1px solid #444;
            padding: 5px 14px; cursor: pointer; }
   button.on { background: #a60; border-color: #fc5; color: #fff; }
-  /* Кадр VGA 640x480 поворачивается на 90° по часовой стрелке.
-     Сцена (.stage) имеет «повёрнутые» пропорции 3:4, картинка внутри —
-     натуральные 4:3. Другой угол: rotate(-90deg) или rotate(180deg)
-     (для 180° верните сцене пропорции 4/3 и ширину картинки 100%). */
+  /* Кадр 4:3 поворачивается на странице (список «Поворот кадра»: 0/90/180/
+     270). Функция setRotation в JS пересчитывает аспект сцены и размер
+     картинки под угол — повёрнутый кадр заполняет сцену целиком, без чёрных
+     полос; рамка (border у картинки) крутится вместе с кадром. Здесь в CSS —
+     умолчание 90° по часовой (камера на платформе стоит повёрнутой). */
   .stage {
     position: relative;
-    height: 82vh;          /* повёрнутый кадр — вертикальный */
-    aspect-ratio: 3 / 4;   /* пропорции повёрнутого VGA-кадра */
+    height: min(82vh, calc(100vh - 160px)); /* кадр + пульт под ним */
+    aspect-ratio: 3 / 4;   /* пропорции повёрнутого кадра 4:3 */
     max-width: 100%;
   }
   .stage img {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 133.333%;       /* = высота сцены (640/480) */
+    width: 133.333%;       /* = высота сцены (4:3, повёрнуто на 90°) */
     transform: translate(-50%, -50%) rotate(90deg);
     border: 1px solid #444;
     background: #000;
@@ -340,7 +354,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
      touch-action и запрет выделения — чтобы кнопка не скроллила страницу
      и не выделялась «подсветкой» при удержании. */
   .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
-         margin: 12px 0 0; }
+         max-width: 280px; margin: 10px auto 0; }
   .pad button { height: 50px; font-size: 18px; user-select: none;
                 -webkit-user-select: none; touch-action: none; }
   .pad button.on { background: #060; border-color: #4c6; color: #fff; }
@@ -348,7 +362,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
 <div class="row">
-<div class="stage"><img id="stream" alt="видеопоток"></div>
+<div class="stage" id="stage"><img id="stream" alt="видеопоток"></div>
 <div class="panel">
 <span class="lbl">Качество</span>
 <select id="quality">
@@ -357,6 +371,13 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="2">среднее (VGA 640x480)</option>
   <option value="3">высокое (SVGA 800x600)</option>
   <option value="4">максимальное (UXGA 1600x1200)</option>
+</select>
+<span class="lbl">Поворот кадра</span>
+<select id="rot">
+  <option value="0">0° — горизонтально</option>
+  <option value="90">90° по часовой</option>
+  <option value="180">180°</option>
+  <option value="270">90° против часовой</option>
 </select>
 <span class="lbl">Свет</span>
 <div class="pair">
@@ -386,11 +407,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="75">75%</option>
   <option value="100">100%</option>
 </select>
+</div>
+</div>
 <div class="pad" id="pad">
   <span></span><button data-dir="f">&#9650; W</button><span></span>
   <button data-dir="l">&#9664; A</button><button data-dir="b">&#9660; S</button><button data-dir="r">&#9654; D</button>
-</div>
-</div>
 </div>
 <script>
   // Стрим обслуживает ОТДЕЛЬНЫЙ сервер на порту 81 (бесконечный /stream
@@ -409,6 +430,25 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     fetch('/set?quality=' + sel.value).then(function () {
       img.src = streamUrl + '?' + Date.now();
     });
+  };
+  // Поворот кадра: аспект сцены и размер картинки пересчитываются под угол,
+  // чтобы кадр заполнял сцену целиком (без чёрных полей), рамка крутится
+  // вместе с ним. Угол хранится на плате и подставляется меткой @R@.
+  var stage = document.getElementById('stage');
+  var rotSel = document.getElementById('rot');
+  function setRotation(deg)
+  {
+    var vertical = (deg % 180 !== 0);
+    stage.style.aspectRatio = vertical ? '3 / 4' : '4 / 3';
+    img.style.width = vertical ? '133.333%' : '100%';
+    img.style.transform = 'translate(-50%, -50%) rotate(' + deg + 'deg)';
+  }
+  rotSel.value = '@R@';
+  setRotation(parseInt(rotSel.value, 10) || 0);
+  rotSel.onchange = function () {
+    var deg = parseInt(rotSel.value, 10);
+    setRotation(deg);
+    fetch('/set?rot=' + deg);
   };
   // RGB-светодиод: кнопка вкл/выкл и выбор цвета
   // (список цветов тут и в таблице LIGHT_COLORS должен совпадать)
@@ -629,6 +669,17 @@ static esp_err_t set_handler(httpd_req_t *req)
         return httpd_resp_send(req, "OK", 2);
       }
     }
+    else if (httpd_query_key_value(query, "rot", val, sizeof(val)) == ESP_OK)
+    {
+      int deg = atoi(val);
+      if (deg == 0 || deg == 90 || deg == 180 || deg == 270)
+      {
+        g_rotation = deg;
+        s_prefs.putUChar("rot", (uint8_t)deg);
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
     else if (httpd_query_key_value(query, "motor", val, sizeof(val)) == ESP_OK)
     {
       if (motorCommand(val[0]))
@@ -671,23 +722,24 @@ static esp_err_t index_handler(httpd_req_t *req)
   httpd_resp_set_type(req, "text/html");
   // страницу не кэшировать: после перепрошивки JS должен обновиться
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@/@T@ в странице
-  const char *marks[5] = {"@Q@", "@L@", "@C@", "@S@", "@T@"};
-  char qbuf[4], lbuf[4], cbuf[4], sbuf[4], tbuf[4];
-  const char *vals[5] = {qbuf, lbuf, cbuf, sbuf, tbuf};
-  int lens[5] = {
+  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@/@T@/@R@ в странице
+  const char *marks[6] = {"@Q@", "@L@", "@C@", "@S@", "@T@", "@R@"};
+  char qbuf[4], lbuf[4], cbuf[4], sbuf[4], tbuf[4], rbuf[4];
+  const char *vals[6] = {qbuf, lbuf, cbuf, sbuf, tbuf, rbuf};
+  int lens[6] = {
       snprintf(qbuf, sizeof(qbuf), "%d", (int)g_quality),
       snprintf(lbuf, sizeof(lbuf), "%d", g_lightOn ? 1 : 0),
       snprintf(cbuf, sizeof(cbuf), "%d", (int)g_lightColor),
       snprintf(sbuf, sizeof(sbuf), "%d", (int)g_motorSpeed),
-      snprintf(tbuf, sizeof(tbuf), "%d", (int)g_motorTurnSpeed)};
+      snprintf(tbuf, sizeof(tbuf), "%d", (int)g_motorTurnSpeed),
+      snprintf(rbuf, sizeof(rbuf), "%d", (int)g_rotation)};
   const char *p = INDEX_HTML;
   while (*p)
   {
     // ищем ближайшую метку от текущей позиции
     const char *best = NULL;
     int bi = -1;
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 6; i++)
     {
       if (lens[i] <= 0)
         continue;
