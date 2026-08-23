@@ -19,9 +19,10 @@ pio device monitor -d .       # монитор порта (115200)
   `board_build.arduino.memory_type = qio_opi`, `board_upload.flash_size = 16MB`,
   `board_build.partitions = default_16MB.csv` и `-DBOARD_HAS_PSRAM`. Не убирать —
   иначе PSRAM не инициализируется и стрим деградирует.
-- **lib_deps пуст намеренно**: драйвер `esp32-camera` уже встроен в ядро
-  arduino-esp32 2.0.17 (precompiled в SDK платформы espressif32). Библиотеку из
-  реестра не добавлять — она устаревшая и помечена `frameworks: espidf`.
+- **lib_deps**: только `tzapu/WiFiManager` (настроечная точка доступа).
+  Драйвер `esp32-camera` уже встроен в ядро arduino-esp32 2.0.17 (precompiled
+  в SDK платформы espressif32) — из реестра его НЕ добавлять: библиотека там
+  устаревшая и помечена `frameworks: espidf`.
 - **Пины камеры** (блок «ПИНЫ КАМЕРЫ» в начале `src/main.cpp`) — распиновка
   Freenove ESP32-S3-WROOM CAM по умолчанию. Точная модель платы пользователя
   неизвестна: если камера не инициализируется — менять нужно только этот блок
@@ -70,6 +71,17 @@ SD-карта и проводной последовательный порт н
 
 ## Устройство кода
 
+- **WiFi — через WiFiManager** (`connectWiFi()` в `setup()`): подключение по
+  сети, сохранённой в NVS; на самом первом старте (сеть ещё не сохранена) —
+  подсев `WIFI_SSID`/`WIFI_PASS` из `wifi_secrets.h`. Если за 20 с не
+  подключились — `wm.autoConnect(WIFI_AP_NAME)` поднимает настроечную точку
+  доступа (имя — `WIFI_AP_NAME` в `wifi_secrets.h`, у нас `esp32cam-setup`)
+  с captive-порталом выбора сети; выбранное сохраняется в NVS, портал без
+  действий 3 мин — перезапуск. В `loop()` связь контролируется: пропажа
+  дольше 30 с — `ESP.restart()` (короткие лечит автореконнект; после
+  перезапуска при неудаче снова портал). При уже сохранённой сети НЕ звать
+  `WiFi.begin(WIFI_SSID, WIFI_PASS)` — затрёт выбор из портала (проверка
+  через `esp_wifi_get_config`). В режиме портала светодиод синий.
 - Сервер — `esp_http_server` из ESP-IDF, **два экземпляра**: порт 80 — `/` и
   `/set?quality=|rot=|light=|color=|motor=|speed=|tspeed=`, порт 81 — только `/stream`. Поток httpd у
   каждого экземпляра один, а `stream_handler` — бесконечный цикл: держать

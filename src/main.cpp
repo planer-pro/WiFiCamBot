@@ -21,8 +21,11 @@
  *
  * Плюс приём прошивки по WiFi (ArduinoOTA, порт 3232) — см. setup().
  *
- * Данные WiFi — в src/wifi_secrets.h (в git не попадает, см. .gitignore;
- * образец — wifi_secrets.h.example).
+ * WiFi: сеть выбирается через WiFiManager — если подключиться не удалось,
+ * поднимается настроечная точка доступа WIFI_AP_NAME (см. src/wifi_secrets.h),
+ * выбранная сеть и пароль запоминаются в памяти платы. Данные из
+ * wifi_secrets.h используются только на самый первый запуск (в git файл
+ * не попадает, см. .gitignore; образец — wifi_secrets.h.example).
  */
 
 #include <Arduino.h>
@@ -30,6 +33,8 @@
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
 #include <Preferences.h>
+#include <WiFiManager.h>
+#include "esp_wifi.h"
 #include "esp_camera.h"
 #include "esp_http_server.h"
 #include "driver/rmt.h"
@@ -39,8 +44,57 @@
 #define HOSTNAME "esp32cam" // адрес будет http://esp32cam.local/
 
 // ============================= НАСТРОЙКИ WiFi =============================
-// SSID и пароль читаются из src/wifi_secrets.h. Файла нет — скопируйте
-// wifi_secrets.h.example, впишите свои данные и прошейте заново.
+// Сеть выбирается и запоминается через WiFiManager: если подключиться не
+// удалось, плата поднимает настроечную точку доступа WIFI_AP_NAME (имя —
+// в src/wifi_secrets.h), в ней открывается страница выбора сети; выбранная
+// сеть и пароль сохраняются в энергонезависимой памяти платы. Значения
+// WIFI_SSID/WIFI_PASS из wifi_secrets.h используются только на самый первый
+// запуск, пока никакая сеть ещё не сохранена.
+#define WIFI_CONNECT_TIMEOUT_MS 20000 // столько ждём сеть до подъёма портала
+#define WIFI_FAIL_RESTART_MS 30000    // связь пропала так надолго — перезапуск
+
+static void wsSendColor(uint8_t r, uint8_t g, uint8_t b); // ниже по коду
+
+// Подключение к WiFi; при неудаче — настроечная точка доступа (WiFiManager).
+// Возвращает управление только когда сеть подключена.
+static void connectWiFi()
+{
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true); // короткие пропадания ядро лечит само
+  WiFi.setHostname(HOSTNAME);
+  WiFi.setSleep(false); // отключаем энергосбережение ради низкой задержки стрима
+
+  // Первый запуск (ни одна сеть ещё не сохранена) — пробуем данные из
+  // wifi_secrets.h. Дальше подключение идёт только по сохранённой сети,
+  // иначе WiFiManager-настройки затирались бы прошитыми значениями.
+  wifi_config_t stored = {};
+  bool hasStored = esp_wifi_get_config(WIFI_IF_STA, &stored) == ESP_OK &&
+                   stored.sta.ssid[0] != 0;
+  if (!hasStored)
+  {
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    uint32_t t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_CONNECT_TIMEOUT_MS)
+    {
+      delay(500);
+    }
+  }
+
+  // Уже подключены (сохранённая или подсеянная сеть) — портал не нужен.
+  // Иначе WiFiManager поднимет точку доступа WIFI_AP_NAME со страницей
+  // выбора сети; выбранное сохранится и плата подключится уже к нему.
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    wsSendColor(0, 0, 255); // режим настройки — синий светодиод
+    WiFiManager wm;
+    wm.setConfigPortalTimeout(180); // портал без действий 3 мин — начать заново
+    wm.setBreakAfterConfig(true);   // неудачные новые данные — снова в цикл попыток
+    if (!wm.autoConnect(WIFI_AP_NAME))
+    {
+      ESP.restart(); // таймаут портала — перезапуск и новая попытка
+    }
+  }
+}
 
 // ============================ ПИНЫ КАМЕРЫ =================================
 // По умолчанию — распиновка Freenove ESP32-S3-WROOM CAM (самый частый вариант
@@ -861,20 +915,7 @@ void setup()
     return; // без камеры сервер не поднимаем
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname(HOSTNAME);
-  WiFi.setSleep(false); // отключаем энергосбережение ради низкой задержки стрима
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-
-  uint32_t t0 = millis();
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    if (millis() - t0 > 20000)
-    {
-      ESP.restart(); // не подключились за 20 с (SSID/пароль?) — старт заново
-    }
-  }
+  connectWiFi();
 
   if (MDNS.begin(HOSTNAME))
   {
@@ -920,6 +961,27 @@ void setup()
 void loop()
 {
   ArduinoOTA.handle();
+
+  // Контроль связи: короткие пропадания лечит автореконнект ядра; если сети
+  // нет дольше WIFI_FAIL_RESTART_MS — перезапуск (новая попытка подключиться,
+  // при неудаче поднимется настроечная точка доступа WiFiManager).
+  static uint32_t wifiDownSince = 0;
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    wifiDownSince = 0;
+  }
+  else
+  {
+    if (wifiDownSince == 0)
+    {
+      wifiDownSince = millis();
+    }
+    else if (millis() - wifiDownSince > WIFI_FAIL_RESTART_MS)
+    {
+      ESP.restart();
+    }
+  }
+
   // Страховка от «залипания» команды: пока страница удерживает направление,
   // она повторяет его каждые 500 мс; если повторов нет дольше таймаута
   // (обрыв WiFi, закрыли вкладку) — моторы останавливаем сами.
