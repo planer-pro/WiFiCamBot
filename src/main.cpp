@@ -859,13 +859,19 @@ static const char PAD_HTML[] PROGMEM = R"rawliteral(
   if (!navigator.getGamepads)
   {
     setStatus('&#10006; Gamepad API в этом браузере отсутствует', 'bad');
+    hint.innerHTML = 'В Firefox проверьте <code>about:config</code>: параметр ' +
+      '<code>dom.gamepad.enabled</code> должен быть <code>true</code>. ' +
+      'В Chromium-браузерах API включён всегда.';
   }
   else if (!window.isSecureContext)
   {
     setStatus('&#10006; Страница не считается безопасным контекстом — браузер скрывает геймпады', 'bad');
-    hint.innerHTML = 'Gamepad API отдаётся только на https. Разрешите наш адрес вручную: ' +
-      'откройте <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, ' +
-      'впишите <code>http://wificambot.local</code>, включите и перезапустите браузер.';
+    hint.innerHTML = 'Gamepad API отдаётся только на https. В Chrome/Chromium/Edge ' +
+      'разрешите наш адрес вручную: откройте ' +
+      '<code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, ' +
+      'впишите <code>http://wificambot.local</code>, включите и перезапустите браузер. ' +
+      'Аналогичного флага для выборочного разрешения origin в Firefox нет — ' +
+      'если API скрыт, откройте эту страницу в Chromium-браузере.';
   }
   else
   {
