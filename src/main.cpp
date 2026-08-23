@@ -22,10 +22,10 @@
  * Плюс приём прошивки по WiFi (ArduinoOTA, порт 3232) — см. setup().
  *
  * WiFi: сеть выбирается через WiFiManager — если подключиться не удалось,
- * поднимается настроечная точка доступа WIFI_AP_NAME (см. src/wifi_secrets.h),
- * выбранная сеть и пароль запоминаются в памяти платы. Данные из
- * wifi_secrets.h используются только на самый первый запуск (в git файл
- * не попадает, см. .gitignore; образец — wifi_secrets.h.example).
+ * поднимается настроечная точка доступа WIFI_AP_NAME (имя — в
+ * src/wifi_secrets.h, файл в git не попадает, см. .gitignore; образец —
+ * wifi_secrets.h.example); выбранная сеть и пароль запоминаются в памяти
+ * платы (NVS) и используются при следующих включениях.
  */
 
 #include <Arduino.h>
@@ -34,7 +34,6 @@
 #include <ArduinoOTA.h>
 #include <Preferences.h>
 #include <WiFiManager.h>
-#include "esp_wifi.h"
 #include "esp_camera.h"
 #include "esp_http_server.h"
 #include "driver/rmt.h"
@@ -47,9 +46,7 @@
 // Сеть выбирается и запоминается через WiFiManager: если подключиться не
 // удалось, плата поднимает настроечную точку доступа WIFI_AP_NAME (имя —
 // в src/wifi_secrets.h), в ней открывается страница выбора сети; выбранная
-// сеть и пароль сохраняются в энергонезависимой памяти платы. Значения
-// WIFI_SSID/WIFI_PASS из wifi_secrets.h используются только на самый первый
-// запуск, пока никакая сеть ещё не сохранена.
+// сеть и пароль сохраняются в энергонезависимой памяти платы.
 #define WIFI_CONNECT_TIMEOUT_MS 20000 // столько ждём сеть до подъёма портала
 #define WIFI_FAIL_RESTART_MS 30000    // связь пропала так надолго — перезапуск
 
@@ -64,35 +61,18 @@ static void connectWiFi()
   WiFi.setHostname(HOSTNAME);
   WiFi.setSleep(false); // отключаем энергосбережение ради низкой задержки стрима
 
-  // Первый запуск (ни одна сеть ещё не сохранена) — пробуем данные из
-  // wifi_secrets.h. Дальше подключение идёт только по сохранённой сети,
-  // иначе WiFiManager-настройки затирались бы прошитыми значениями.
-  wifi_config_t stored = {};
-  bool hasStored = esp_wifi_get_config(WIFI_IF_STA, &stored) == ESP_OK &&
-                   stored.sta.ssid[0] != 0;
-  if (!hasStored)
+  // Подключаемся к сети, сохранённой в NVS (выбранной когда-то через портал).
+  // Не получилось за WIFI_CONNECT_TIMEOUT_MS — WiFiManager поднимет
+  // настроечную точку доступа WIFI_AP_NAME со страницей выбора сети;
+  // выбранное сохранится в NVS и плата подключится уже к нему.
+  WiFiManager wm;
+  wm.setConnectTimeout(WIFI_CONNECT_TIMEOUT_MS / 1000);
+  wm.setConfigPortalTimeout(180); // портал без действий 3 мин — начать заново
+  wm.setBreakAfterConfig(true);   // неудачные новые данные — снова в цикл попыток
+  wm.setAPCallback([](WiFiManager *) { wsSendColor(0, 0, 255); }); // портал — синий
+  if (!wm.autoConnect(WIFI_AP_NAME))
   {
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_CONNECT_TIMEOUT_MS)
-    {
-      delay(500);
-    }
-  }
-
-  // Уже подключены (сохранённая или подсеянная сеть) — портал не нужен.
-  // Иначе WiFiManager поднимет точку доступа WIFI_AP_NAME со страницей
-  // выбора сети; выбранное сохранится и плата подключится уже к нему.
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    wsSendColor(0, 0, 255); // режим настройки — синий светодиод
-    WiFiManager wm;
-    wm.setConfigPortalTimeout(180); // портал без действий 3 мин — начать заново
-    wm.setBreakAfterConfig(true);   // неудачные новые данные — снова в цикл попыток
-    if (!wm.autoConnect(WIFI_AP_NAME))
-    {
-      ESP.restart(); // таймаут портала — перезапуск и новая попытка
-    }
+    ESP.restart(); // таймаут портала — перезапуск и новая попытка
   }
 }
 
