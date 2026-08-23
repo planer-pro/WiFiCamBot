@@ -9,7 +9,8 @@
  *   /set?color=N   — цвет светодиода (таблица LIGHT_COLORS, 0 = белый)
  *   /set?motor=X   — моторы гусениц (MX1508): f вперёд, b назад,
  *                    l/r поворот влево/вправо (разворот на месте), s стоп
- *   /set?speed=N   — мощность моторов, % (1..100)
+ *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100)
+ *   /set?tspeed=N  — мощность поворотов, % (1..100) — отдельно от хода
  *   /stream        — MJPEG-поток (multipart/x-mixed-replace), ОТДЕЛЬНЫЙ
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
@@ -172,8 +173,9 @@ static void applyLight()
 #define MOTOR_PWM_MAX 1023        // максимум duty при 10 битах
 #define MOTOR_CMD_TIMEOUT_MS 1500 // нет команд так долго — стоп (обрыв WiFi)
 
-static volatile char g_motorCmd = 's';  // f | b | l | r | s
-static volatile int g_motorSpeed = 100; // мощность, %
+static volatile char g_motorCmd = 's';      // f | b | l | r | s
+static volatile int g_motorSpeed = 100;     // мощность вперёд/назад, %
+static volatile int g_motorTurnSpeed = 100; // мощность поворотов, % (отдельно)
 static volatile uint32_t g_motorLastMs = 0;
 
 // Duty в один канал ШИМ моторов. Каналы 1-4 на таймере 1: канал 0 и таймер 0
@@ -214,7 +216,11 @@ static void initMotors()
 
 static void applyMotors()
 {
-  uint32_t duty = (uint32_t)MOTOR_PWM_MAX * g_motorSpeed / 100;
+  // ход и повороты — с раздельной мощностью (поворот на месте обычно
+  // требует другой мощности, чем езда вперёд/назад)
+  bool turn = (g_motorCmd == 'l' || g_motorCmd == 'r');
+  int pct = turn ? g_motorTurnSpeed : g_motorSpeed;
+  uint32_t duty = (uint32_t)MOTOR_PWM_MAX * pct / 100;
   char c = g_motorCmd;
   motorDuty(LEDC_CHANNEL_1, (c == 'f' || c == 'r') ? duty : 0); // левый вперёд
   motorDuty(LEDC_CHANNEL_2, (c == 'b' || c == 'l') ? duty : 0); // левый назад
@@ -251,7 +257,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <title>ESP32-S3 камера</title>
 <style>
   body { font-family: sans-serif; background: #111; color: #eee;
-         margin: 0; padding: 16px; text-align: center; }
+         margin: 0; padding: 8px; text-align: center; }
   a   { color: #8cf; }
   select { background: #222; color: #eee; border: 1px solid #444;
            padding: 4px 8px; }
@@ -278,21 +284,37 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     border: 1px solid #444;
     background: #000;
   }
+  /* Видео и панель управления — в одну строку, чтобы всё влезало на экран;
+     на узких экранах панель уходит под видео. */
+  .row { display: flex; gap: 12px; justify-content: center;
+         align-items: stretch; }
+  .panel { display: flex; flex-direction: column; gap: 6px;
+           width: 180px; flex: none; }
+  .panel .lbl { font-size: 12px; color: #aaa; text-align: left;
+                margin: 6px 0 0; }
+  .panel select { width: 100%; box-sizing: border-box; font-size: 14px; }
+  .pair { display: flex; gap: 6px; }
+  .pair select { flex: 1; min-width: 0; }
+  @media (max-width: 620px) {
+    .row { flex-direction: column; align-items: center; }
+    .stage { height: 55vh; }
+    .panel { width: min(320px, 100%); }
+  }
   /* Пульт гусениц: кнопки или клавиши (стрелки / WASD), удерживать.
      touch-action и запрет выделения — чтобы кнопка не скроллила страницу
      и не выделялась «подсветкой» при удержании. */
-  .pad { display: grid; grid-template-columns: repeat(3, 76px); gap: 8px;
-         justify-content: center; margin: 14px auto; }
-  .pad button { height: 54px; font-size: 18px; user-select: none;
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+         margin: 12px 0 0; }
+  .pad button { height: 50px; font-size: 18px; user-select: none;
                 -webkit-user-select: none; touch-action: none; }
   .pad button.on { background: #060; border-color: #4c6; color: #fff; }
 </style>
 </head>
 <body>
-<h2>ESP32-S3 &mdash; живой просмотр</h2>
+<div class="row">
 <div class="stage"><img id="stream" alt="видеопоток"></div>
-<p>
-Качество:
+<div class="panel">
+<span class="lbl">Качество</span>
 <select id="quality">
   <option value="0">минимальное (QVGA 320x240)</option>
   <option value="1">низкое (VGA 640x480)</option>
@@ -300,9 +322,9 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="3">высокое (SVGA 800x600)</option>
   <option value="4">максимальное (UXGA 1600x1200)</option>
 </select>
-</p>
-<p>
-<button id="light">Свет: выкл</button>
+<span class="lbl">Свет</span>
+<div class="pair">
+<button id="light">вкл</button>
 <select id="color">
   <option value="0">белый</option>
   <option value="1">красный</option>
@@ -313,20 +335,26 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="6">синий</option>
   <option value="7">пурпурный</option>
 </select>
-</p>
-<p>
-Мощность моторов:
+</div>
+<span class="lbl">Мощность: вперёд/назад</span>
 <select id="speed">
   <option value="25">25%</option>
   <option value="50">50%</option>
   <option value="75">75%</option>
   <option value="100">100%</option>
 </select>
-</p>
-<p>Движение: кнопки или клавиши (стрелки / W A S D) — удерживать</p>
+<span class="lbl">Мощность: повороты</span>
+<select id="tspeed">
+  <option value="25">25%</option>
+  <option value="50">50%</option>
+  <option value="75">75%</option>
+  <option value="100">100%</option>
+</select>
 <div class="pad" id="pad">
   <span></span><button data-dir="f">&#9650; W</button><span></span>
   <button data-dir="l">&#9664; A</button><button data-dir="b">&#9660; S</button><button data-dir="r">&#9654; D</button>
+</div>
+</div>
 </div>
 <script>
   // Стрим обслуживает ОТДЕЛЬНЫЙ сервер на порту 81 (бесконечный /stream
@@ -354,7 +382,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   colorSel.value = '@C@';
   function lightLabel()
   {
-    lightBtn.textContent = lightOn ? 'Свет: вкл' : 'Свет: выкл';
+    lightBtn.textContent = lightOn ? 'вкл' : 'выкл';
     lightBtn.className = lightOn ? 'on' : '';
   }
   lightBtn.onclick = function () {
@@ -444,6 +472,9 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   var speedSel = document.getElementById('speed');
   speedSel.value = '@S@';
   speedSel.onchange = function () { fetch('/set?speed=' + speedSel.value); };
+  var turnSel = document.getElementById('tspeed');
+  turnSel.value = '@T@';
+  turnSel.onchange = function () { fetch('/set?tspeed=' + turnSel.value); };
   motorUI();
 </script>
 </body>
@@ -578,6 +609,17 @@ static esp_err_t set_handler(httpd_req_t *req)
         return httpd_resp_send(req, "OK", 2);
       }
     }
+    else if (httpd_query_key_value(query, "tspeed", val, sizeof(val)) == ESP_OK)
+    {
+      int pct = atoi(val);
+      if (pct >= 1 && pct <= 100)
+      {
+        g_motorTurnSpeed = pct;
+        applyMotors();
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
   }
   httpd_resp_send_404(req);
   return ESP_FAIL;
@@ -588,22 +630,23 @@ static esp_err_t index_handler(httpd_req_t *req)
   httpd_resp_set_type(req, "text/html");
   // страницу не кэшировать: после перепрошивки JS должен обновиться
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@ в странице
-  const char *marks[4] = {"@Q@", "@L@", "@C@", "@S@"};
-  char qbuf[4], lbuf[4], cbuf[4], sbuf[4];
-  const char *vals[4] = {qbuf, lbuf, cbuf, sbuf};
-  int lens[4] = {
+  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@/@T@ в странице
+  const char *marks[5] = {"@Q@", "@L@", "@C@", "@S@", "@T@"};
+  char qbuf[4], lbuf[4], cbuf[4], sbuf[4], tbuf[4];
+  const char *vals[5] = {qbuf, lbuf, cbuf, sbuf, tbuf};
+  int lens[5] = {
       snprintf(qbuf, sizeof(qbuf), "%d", (int)g_quality),
       snprintf(lbuf, sizeof(lbuf), "%d", g_lightOn ? 1 : 0),
       snprintf(cbuf, sizeof(cbuf), "%d", (int)g_lightColor),
-      snprintf(sbuf, sizeof(sbuf), "%d", (int)g_motorSpeed)};
+      snprintf(sbuf, sizeof(sbuf), "%d", (int)g_motorSpeed),
+      snprintf(tbuf, sizeof(tbuf), "%d", (int)g_motorTurnSpeed)};
   const char *p = INDEX_HTML;
   while (*p)
   {
     // ищем ближайшую метку от текущей позиции
     const char *best = NULL;
     int bi = -1;
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 5; i++)
     {
       if (lens[i] <= 0)
         continue;
