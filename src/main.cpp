@@ -588,11 +588,27 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   window.addEventListener('pagehide', function () {
     fetch('/set?motor=s', {keepalive: true});
   });
+  // Мощности: плата принимает через /set любые 1-100 %, а в списках — только
+  // стандартные шаги. Если сохранено промежуточное значение (заданное напрямую
+  // через адресную строку), добавляем его в список на лету — иначе
+  // селект остался бы пустым.
+  function applySelectValue(sel, val)
+  {
+    sel.value = val;
+    if (sel.value !== val)
+    {
+      var o = document.createElement('option');
+      o.value = val;
+      o.textContent = val + '%';
+      sel.appendChild(o);
+      sel.value = val;
+    }
+  }
   var speedSel = document.getElementById('speed');
-  speedSel.value = '@S@';
+  applySelectValue(speedSel, '@S@');
   speedSel.onchange = function () { fetch('/set?speed=' + speedSel.value); };
   var turnSel = document.getElementById('tspeed');
-  turnSel.value = '@T@';
+  applySelectValue(turnSel, '@T@');
   turnSel.onchange = function () { fetch('/set?tspeed=' + turnSel.value); };
   motorUI();
 </script>
