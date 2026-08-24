@@ -629,7 +629,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   };
   // Поворот кадра: аспект сцены и размер картинки пересчитываются под угол,
   // чтобы кадр заполнял сцену целиком (без чёрных полей), рамка крутится
-  // вместе с ним. Угол хранится на плате и подставляется меткой @R@.
+  // вместе с ним. Угол хранится на плате и приходит в страницу меткой.
   var stage = document.getElementById('stage');
   var rotSel = document.getElementById('rot');
   function setRotation(deg)
