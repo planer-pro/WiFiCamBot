@@ -12,9 +12,11 @@
  *                    l/r поворот влево/вправо (разворот на месте), s стоп
  *   /set?mix=L,R   — трекпад на странице: раздельная мощность гусениц, %
  *                    от -100 до 100 (знак = направление); 0,0 — стоп
- *   /set?ctrl=N    — вид управления на странице: 0 кнопки, 1 трекпад
+ *   /set?ctrl=N    — вид управления на странице: 0 кнопки, 1 трекпад;
+ *                    в ответе — мощности выбранного вида "ход,поворот"
  *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100; в трекпаде —
- *                    предел крайних положений по вертикали)
+ *                    предел крайних положений по вертикали); у каждого вида
+ *                    управления мощности свои, пишутся раздельно
  *   /set?tspeed=N  — мощность поворотов, % (1..100; в трекпаде — предел
  *                    по горизонтали) — отдельно от хода
  *   /set?accel=N   — разгон моторов вперёд/назад, мс от нуля до полной
@@ -25,7 +27,8 @@
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
  *
- * Настройки (качество, свет+цвет, мощности, разгоны, вид управления) — в NVS
+ * Настройки (качество, свет+цвет, мощности — свои у каждого вида управления,
+ * разгоны, вид управления) — в NVS
  * записываются при каждом изменении и восстанавливаются при включении
  * питания — см. settingsLoad().
  *
@@ -441,6 +444,18 @@ static void motorMix(int l, int r)
 // что после восстановления из NVS браузер всё покажет сам.
 static Preferences s_prefs;
 
+// Мощности у каждого вида управления СВОИ: кнопки — speed/tspeed, трекпад —
+// pspeed/ptspeed; в g_motorSpeed/g_motorTurnSpeed всегда лежит пара активного
+// вида (по g_ctrlMode). Заполняется при старте и при смене вида управления.
+static void loadPowers()
+{
+  const bool pad = (g_ctrlMode == 1);
+  int sp = (int)s_prefs.getUChar(pad ? "pspeed" : "speed", 100);
+  g_motorSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
+  sp = (int)s_prefs.getUChar(pad ? "ptspeed" : "tspeed", 100);
+  g_motorTurnSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
+}
+
 static void settingsLoad()
 {
   s_prefs.begin("cam", false); // пространство создаётся при первом обращении
@@ -467,17 +482,13 @@ static void settingsLoad()
   }
   g_lightColor = c;
 
-  int sp = (int)s_prefs.getUChar("speed", 100);
-  g_motorSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
-  sp = (int)s_prefs.getUChar("tspeed", 100);
-  g_motorTurnSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
-
   int a = (int)s_prefs.getUShort("accel", MOTOR_ACCEL_DEFAULT);
   g_accelMs = accelValid(a) ? (uint16_t)a : MOTOR_ACCEL_DEFAULT;
   a = (int)s_prefs.getUShort("taccel", MOTOR_ACCEL_DEFAULT);
   g_turnAccelMs = accelValid(a) ? (uint16_t)a : MOTOR_ACCEL_DEFAULT;
 
   g_ctrlMode = (s_prefs.getUChar("ctrl", 0) == 1) ? 1 : 0; // вид управления
+  loadPowers(); // мощности — пара активного вида (свои для кнопок/трекпада)
 }
 
 // ========================= СТРАНИЦА И СТРИМ ===============================
@@ -1008,7 +1019,19 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   setCtrl(ctrlSel.value);
   ctrlSel.onchange = function () {
     setCtrl(ctrlSel.value);
-    fetch('/set?ctrl=' + ctrlSel.value);
+    fetch('/set?ctrl=' + ctrlSel.value)
+        .then(function (r) { return r.text(); })
+        .then(function (s) {
+          // мощности у каждого вида управления свои — плата присылает в
+          // ответе пару выбранного вида, подставляем её в поля
+          // (applySelectValue добавит нестандартное значение в список)
+          var p = s.split(',');
+          if (p.length == 2)
+          {
+            applySelectValue(speedSel, p[0]);
+            applySelectValue(turnSel, p[1]);
+          }
+        });
   };
   motorUI();
 </script>
@@ -1165,8 +1188,14 @@ static esp_err_t set_handler(httpd_req_t *req)
       {
         g_ctrlMode = m;
         s_prefs.putUChar("ctrl", (uint8_t)m);
+        // активной стала пара мощностей выбранного вида — отдаём её
+        // странице (свои мощности для кнопок и трекпада)
+        loadPowers();
+        char pbuf[10]; // "100,100"
+        snprintf(pbuf, sizeof(pbuf), "%d,%d", (int)g_motorSpeed,
+                 (int)g_motorTurnSpeed);
         httpd_resp_set_type(req, "text/plain");
-        return httpd_resp_send(req, "OK", 2);
+        return httpd_resp_send(req, pbuf, strlen(pbuf));
       }
     }
     else if (httpd_query_key_value(query, "speed", val, sizeof(val)) == ESP_OK)
@@ -1176,7 +1205,7 @@ static esp_err_t set_handler(httpd_req_t *req)
       {
         g_motorSpeed = pct;
         applyMotors();
-        s_prefs.putUChar("speed", (uint8_t)pct);
+        s_prefs.putUChar(g_ctrlMode == 1 ? "pspeed" : "speed", (uint8_t)pct);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
@@ -1188,7 +1217,7 @@ static esp_err_t set_handler(httpd_req_t *req)
       {
         g_motorTurnSpeed = pct;
         applyMotors();
-        s_prefs.putUChar("tspeed", (uint8_t)pct);
+        s_prefs.putUChar(g_ctrlMode == 1 ? "ptspeed" : "tspeed", (uint8_t)pct);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
