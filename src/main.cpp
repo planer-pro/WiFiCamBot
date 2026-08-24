@@ -23,12 +23,15 @@
  *                    мощности (0 — отключено; варианты — MOTOR_ACCEL_STEPS)
  *   /set?taccel=N  — разгон поворотов, мс (отдельно от хода); разгоны
  *                    действуют только в режиме кнопок — трекпад без них
+ *   /set?start=N   — точка страгивания, % ШИМ (0..90): мощность, ниже
+ *                    которой танк не трогается; шкала сдвигается так, что
+ *                    1..100 % ложатся на [точка ... полная], 0 — как раньше
  *   /stream        — MJPEG-поток (multipart/x-mixed-replace), ОТДЕЛЬНЫЙ
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
  *
  * Настройки (качество, свет+цвет, мощности — свои у каждого вида управления,
- * разгоны, вид управления) — в NVS
+ * разгоны, точка страгивания, вид управления) — в NVS
  * записываются при каждом изменении и восстанавливаются при включении
  * питания — см. settingsLoad().
  *
@@ -289,6 +292,7 @@ static volatile int g_mixL = 0;                               // трекпад:
 static volatile int g_mixR = 0;                               // гусеницы, % (-100..100, знак = ход)
 static volatile int g_motorSpeed = 100;                       // мощность вперёд/назад, %
 static volatile int g_motorTurnSpeed = 100;                   // мощность поворотов, % (отдельно)
+static volatile int g_motorStartPct = 0;                      // точка страгивания, % ШИМ
 static volatile uint16_t g_accelMs = MOTOR_ACCEL_DEFAULT;     // разгон хода
 static volatile uint16_t g_turnAccelMs = MOTOR_ACCEL_DEFAULT; // разгон поворотов
 static volatile int g_ctrlMode = 0;                           // вид управления на странице: 0 кнопки, 1 трекпад
@@ -296,6 +300,22 @@ static volatile uint32_t g_motorLastMs = 0;
 static uint32_t g_chDuty[4] = {0, 0, 0, 0};                 // текущая скважность каналов
 static uint32_t g_chTarget[4] = {0, 0, 0, 0};               // цель по команде/мощности
 static volatile uint16_t g_chAccelMs = MOTOR_ACCEL_DEFAULT; // разгон активной команды
+
+// Точка страгивания: моторы трогаются не с нуля, а с некоторой скважности —
+// всё ниже неё танк стоит. Нижняя граница «живой» шкалы в duty:
+static uint32_t dutyLo()
+{
+  return (uint32_t)MOTOR_PWM_MAX * g_motorStartPct / 100;
+}
+
+// Проценты мощности в duty со сдвигом нижней границы: 1..100 % отображаются
+// на диапазон [точка страгивания ... полная мощность], так что любое ненулевое
+// значение команды уже двигает танк. 0 % НЕ проходит сюда — это честный стоп.
+static uint32_t dutyFromPct(int pct)
+{
+  const uint32_t lo = dutyLo();
+  return lo + (uint32_t)(MOTOR_PWM_MAX - lo) * pct / 100;
+}
 
 // Duty в один канал ШИМ моторов. Каналы 1-4 на таймере 1: канал 0 и таймер 0
 // заняты камерой (XCLK) — их трогать нельзя.
@@ -354,7 +374,7 @@ static void applyMotors()
     };
     for (int i = 0; i < 4; i++)
     {
-      target[i] = (uint32_t)MOTOR_PWM_MAX * mix[i] / 100;
+      target[i] = mix[i] ? dutyFromPct(mix[i]) : 0;
     }
   }
   else
@@ -370,7 +390,7 @@ static void applyMotors()
     bool turn = (g_motorCmd == 'l' || g_motorCmd == 'r');
     int pct = turn ? g_motorTurnSpeed : g_motorSpeed;
     g_chAccelMs = (g_ctrlMode == 1) ? 0 : (turn ? g_turnAccelMs : g_accelMs);
-    uint32_t duty = (uint32_t)MOTOR_PWM_MAX * pct / 100;
+    uint32_t duty = dutyFromPct(pct);
     char c = g_motorCmd;
     const bool active[4] = {
         (c == 'f' || c == 'r'), // левый вперёд
@@ -389,6 +409,12 @@ static void applyMotors()
     if (g_chAccelMs == 0 || g_chTarget[i] < g_chDuty[i])
     {
       g_chDuty[i] = g_chTarget[i];
+    }
+    else if (g_chDuty[i] == 0 && g_chTarget[i] > 0)
+    {
+      // старт движения с нуля: разгон начинаем сразу с точки страгивания —
+      // его время не тратится на мёртвую зону, где танк всё равно стоит
+      g_chDuty[i] = dutyLo();
     }
     motorDuty((ledc_channel_t)(LEDC_CHANNEL_1 + i), g_chDuty[i]);
   }
@@ -518,6 +544,9 @@ static void settingsLoad()
   a = (int)s_prefs.getUShort("taccel", MOTOR_ACCEL_DEFAULT);
   g_turnAccelMs = accelValid(a) ? (uint16_t)a : MOTOR_ACCEL_DEFAULT;
 
+  a = (int)s_prefs.getUChar("start", 0); // точка страгивания, % ШИМ
+  g_motorStartPct = (a >= 0 && a <= 90) ? a : 0;
+
   g_ctrlMode = (s_prefs.getUChar("ctrl", 0) == 1) ? 1 : 0; // вид управления
   loadPowers();                                            // мощности — пара активного вида (свои для кнопок/трекпада)
 }
@@ -565,6 +594,19 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
            padding: 6px 14px; font-size: 13px; cursor: pointer;
            transition: border-color .15s, background .15s, box-shadow .15s; }
   button:hover { border-color: var(--border-hi); }
+  /* Числовое поле (точка страгивания) — в стиле селектов, без стрелок
+     прокрутки: значение набирается, а не листается */
+  input[type=number] { appearance: textfield; -moz-appearance: textfield;
+           background-color: var(--field); color: var(--text);
+           border: 1px solid var(--border); border-radius: 8px;
+           padding: 6px 9px; font-size: 13px; width: 100%;
+           transition: border-color .15s, box-shadow .15s; }
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none;
+           margin: 0; }
+  input[type=number]:hover { border-color: var(--border-hi); }
+  input[type=number]:focus-visible { outline: none; border-color: var(--accent);
+           box-shadow: 0 0 0 2px rgba(85, 178, 255, .25); }
   /* Кадр 4:3 поворачивается на странице (список «Поворот кадра»: 0/90/180/
      270). Функция setRotation в JS пересчитывает аспект сцены и размер
      картинки под угол — повёрнутый кадр заполняет сцену целиком, без чёрных
@@ -623,6 +665,12 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   .arow { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 6px;
           grid-column: 1 / 3; }
   .arow.off { opacity: .45; }
+  /* Точка страгивания — одна на оба столбца: подпись слева, узкое поле
+     справа (оно общее для хода и поворотов — свойство моторов, а не вида
+     управления) */
+  .srow { display: grid; grid-template-columns: 1fr 74px; gap: 5px 6px;
+          align-items: center; grid-column: 1 / 3; }
+  .srow .lbl { margin: 0; }
   select:disabled, select:disabled:hover { border-color: var(--border);
                                            color: var(--muted);
                                            cursor: default; }
@@ -734,6 +782,10 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="75">75%</option>
   <option value="100">100%</option>
 </select>
+<div class="srow">
+<span class="lbl" title="Мощность ШИМ, с которой гусеницы трогаются с места: всё ниже танк стоит. Шкала сдвигается — 1..100% мощности ложатся на диапазон от этой точки до полной">страгивание, %</span>
+<input type="number" id="start" min="0" max="90" step="1" value="@K@">
+</div>
 <div class="arow" id="arow">
 <span class="lbl">разгон</span><span class="lbl">разгон</span>
 <select id="accel">
@@ -938,6 +990,16 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   var turnSel = document.getElementById('tspeed');
   applySelectValue(turnSel, '@T@', 'tspeed');
   turnSel.onchange = function () { fetch('/set?tspeed=' + turnSel.value); };
+  // Точка страгивания: мощность ШИМ, ниже которой танк стоит. Плата сдвигает
+  // шкалу — 1..100 % мощности ложатся на диапазон [точка ... полная].
+  var startInp = document.getElementById('start');
+  startInp.onchange = function () {
+    var v = parseInt(startInp.value, 10);
+    if (isNaN(v)) v = 0;
+    v = v < 0 ? 0 : (v > 90 ? 90 : v);
+    startInp.value = v;
+    fetch('/set?start=' + v);
+  };
   // Разгон: время плавного набора мощности от нуля при старте (0 — отключено,
   // сразу на полную). Стоп всегда мгновенный. Список значений обязан
   // совпадать с таблицей MOTOR_ACCEL_STEPS в прошивке.
@@ -1292,6 +1354,20 @@ static esp_err_t set_handler(httpd_req_t *req)
         return httpd_resp_send(req, "OK", 2);
       }
     }
+    else if (httpd_query_key_value(query, "start", val, sizeof(val)) == ESP_OK)
+    {
+      // точка страгивания: 0..90 % ШИМ (выше нет смысла — не останется
+      // диапазона хода); 0 — как раньше, шкала с нуля
+      int pct = atoi(val);
+      if (pct >= 0 && pct <= 90)
+      {
+        g_motorStartPct = pct;
+        applyMotors();
+        s_prefs.putUChar("start", (uint8_t)pct);
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
   }
   httpd_resp_send_404(req);
   return ESP_FAIL;
@@ -1303,13 +1379,15 @@ static esp_err_t index_handler(httpd_req_t *req)
   // страницу не кэшировать: после перепрошивки JS должен обновиться
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
   // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@/@T@/@R@/@A@/@B@/
-  // @P@ (@A@/@B@ — разгоны хода/поворотов, @P@ — вид управления)
-  const char *marks[9] = {"@Q@", "@L@", "@C@", "@S@", "@T@", "@R@", "@A@", "@B@",
-                          "@P@"};
+  // @P@/@K@ (@A@/@B@ — разгоны хода/поворотов, @P@ — вид управления,
+  // @K@ — точка страгивания)
+  const char *marks[10] = {"@Q@", "@L@", "@C@", "@S@", "@T@", "@R@", "@A@",
+                           "@B@", "@P@", "@K@"};
   char qbuf[4], lbuf[4], cbuf[4], sbuf[4], tbuf[4], rbuf[4], abuf[8], bbuf[8],
-      pbuf[4];
-  const char *vals[9] = {qbuf, lbuf, cbuf, sbuf, tbuf, rbuf, abuf, bbuf, pbuf};
-  int lens[9] = {
+      pbuf[4], kbuf[4];
+  const char *vals[10] = {qbuf, lbuf, cbuf, sbuf, tbuf, rbuf, abuf, bbuf, pbuf,
+                          kbuf};
+  int lens[10] = {
       snprintf(qbuf, sizeof(qbuf), "%d", (int)g_quality),
       snprintf(lbuf, sizeof(lbuf), "%d", g_lightOn ? 1 : 0),
       snprintf(cbuf, sizeof(cbuf), "%d", (int)g_lightColor),
@@ -1318,14 +1396,15 @@ static esp_err_t index_handler(httpd_req_t *req)
       snprintf(rbuf, sizeof(rbuf), "%d", (int)g_rotation),
       snprintf(abuf, sizeof(abuf), "%d", (int)g_accelMs),
       snprintf(bbuf, sizeof(bbuf), "%d", (int)g_turnAccelMs),
-      snprintf(pbuf, sizeof(pbuf), "%d", (int)g_ctrlMode)};
+      snprintf(pbuf, sizeof(pbuf), "%d", (int)g_ctrlMode),
+      snprintf(kbuf, sizeof(kbuf), "%d", (int)g_motorStartPct)};
   const char *p = INDEX_HTML;
   while (*p)
   {
     // ищем ближайшую метку от текущей позиции
     const char *best = NULL;
     int bi = -1;
-    for (int i = 0; i < 9; i++)
+    for (int i = 0; i < 10; i++)
     {
       if (lens[i] <= 0)
         continue;
