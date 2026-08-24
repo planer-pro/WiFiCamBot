@@ -904,26 +904,39 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     fetch('/set?motor=s', {keepalive: true});
   });
   // Мощности: плата принимает через /set любые 1-100 %, а в списках — только
-  // стандартные шаги. Если сохранено промежуточное значение (заданное напрямую
-  // через адресную строку), добавляем его в список на лету — иначе
-  // селект остался бы пустым.
-  function applySelectValue(sel, val)
+  // стандартные шаги. Нестандартное значение (заданное напрямую через
+  // адресную строку) в список НЕ добавляем: поле подтягивается к ближайшему
+  // шагу, и этим же значением поправляем плату — чтобы поле не показывало
+  // одно, а ехало другое.
+  function applySelectValue(sel, val, param)
   {
     sel.value = val;
-    if (sel.value !== val)
+    if (sel.value === val)
     {
-      var o = document.createElement('option');
-      o.value = val;
-      o.textContent = val + '%';
-      sel.appendChild(o);
-      sel.value = val;
+      return;
+    }
+    var best = null;
+    var bestD = 1e9;
+    for (var i = 0; i < sel.options.length; i++)
+    {
+      var d = Math.abs(parseInt(sel.options[i].value, 10) - parseInt(val, 10));
+      if (d < bestD)
+      {
+        bestD = d;
+        best = sel.options[i].value;
+      }
+    }
+    if (best !== null)
+    {
+      sel.value = best;
+      fetch('/set?' + param + '=' + best);
     }
   }
   var speedSel = document.getElementById('speed');
-  applySelectValue(speedSel, '@S@');
+  applySelectValue(speedSel, '@S@', 'speed');
   speedSel.onchange = function () { fetch('/set?speed=' + speedSel.value); };
   var turnSel = document.getElementById('tspeed');
-  applySelectValue(turnSel, '@T@');
+  applySelectValue(turnSel, '@T@', 'tspeed');
   turnSel.onchange = function () { fetch('/set?tspeed=' + turnSel.value); };
   // Разгон: время плавного набора мощности от нуля при старте (0 — отключено,
   // сразу на полную). Стоп всегда мгновенный. Список значений обязан
@@ -1056,12 +1069,13 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .then(function (s) {
           // мощности у каждого вида управления свои — плата присылает в
           // ответе пару выбранного вида, подставляем её в поля
-          // (applySelectValue добавит нестандартное значение в список)
+          // (нестандартное подтянется к ближайшему шагу — см.
+          // applySelectValue)
           var p = s.split(',');
           if (p.length == 2)
           {
-            applySelectValue(speedSel, p[0]);
-            applySelectValue(turnSel, p[1]);
+            applySelectValue(speedSel, p[0], 'speed');
+            applySelectValue(turnSel, p[1], 'tspeed');
           }
         });
   };
