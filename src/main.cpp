@@ -75,8 +75,9 @@ static void wmConfigure(WiFiManager &wm)
 {
   wm.setConnectTimeout(WIFI_CONNECT_TIMEOUT_MS / 1000);
   wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
-  wm.setBreakAfterConfig(true);   // неудачные новые данные — снова в цикл попыток
-  wm.setAPCallback([](WiFiManager *) { wsSendColor(0, 0, 255); }); // портал — синий
+  wm.setBreakAfterConfig(true); // неудачные новые данные — снова в цикл попыток
+  wm.setAPCallback([](WiFiManager *)
+                   { wsSendColor(0, 0, 255); }); // портал — синий
 }
 
 // Сворачивает УСПЕШНО завершившийся портал WiFiManager: освобождает порт 80,
@@ -257,11 +258,11 @@ static void applyLight()
 // 0 = отключено): рост скважности растянут на N мс, а стоп и ЛЮБОЕ снижение
 // мощности всегда мгновенные — торможение не должно зависеть от настроек.
 // ПИНЫ ПОДКЛЮЧЕНИЯ — поменяйте под свою проводку (камере эти пины не нужны).
-#define MOTOR_L_IN1_GPIO 1  // MX1508 IN1: левый мотор, вперёд
-#define MOTOR_L_IN2_GPIO 2  // MX1508 IN2: левый мотор, назад
-#define MOTOR_R_IN1_GPIO 3  // MX1508 IN3: правый мотор, вперёд
-#define MOTOR_R_IN2_GPIO 14 // MX1508 IN4: правый мотор, назад
-#define MOTOR_PWM_FREQ_HZ 20000   // выше слышимого диапазона — моторы не «пищат»
+#define MOTOR_L_IN1_GPIO 1      // MX1508 IN1: левый мотор, вперёд
+#define MOTOR_L_IN2_GPIO 2      // MX1508 IN2: левый мотор, назад
+#define MOTOR_R_IN1_GPIO 14     // MX1508 IN3: правый мотор, вперёд
+#define MOTOR_R_IN2_GPIO 3      // MX1508 IN4: правый мотор, назад
+#define MOTOR_PWM_FREQ_HZ 20000 // выше слышимого диапазона — моторы не «пищат»
 #define MOTOR_PWM_RES LEDC_TIMER_10_BIT
 #define MOTOR_PWM_MAX 1023        // максимум duty при 10 битах
 #define MOTOR_CMD_TIMEOUT_MS 1500 // нет команд так долго — стоп (обрыв WiFi)
@@ -283,17 +284,17 @@ static bool accelValid(int ms)
   return false;
 }
 
-static volatile char g_motorCmd = 's';      // f | b | l | r | s | m (m — трекпад)
-static volatile int g_mixL = 0;             // трекпад: мощность левой/правой
-static volatile int g_mixR = 0;             // гусеницы, % (-100..100, знак = ход)
-static volatile int g_motorSpeed = 100;     // мощность вперёд/назад, %
-static volatile int g_motorTurnSpeed = 100; // мощность поворотов, % (отдельно)
+static volatile char g_motorCmd = 's';                        // f | b | l | r | s | m (m — трекпад)
+static volatile int g_mixL = 0;                               // трекпад: мощность левой/правой
+static volatile int g_mixR = 0;                               // гусеницы, % (-100..100, знак = ход)
+static volatile int g_motorSpeed = 100;                       // мощность вперёд/назад, %
+static volatile int g_motorTurnSpeed = 100;                   // мощность поворотов, % (отдельно)
 static volatile uint16_t g_accelMs = MOTOR_ACCEL_DEFAULT;     // разгон хода
 static volatile uint16_t g_turnAccelMs = MOTOR_ACCEL_DEFAULT; // разгон поворотов
-static volatile int g_ctrlMode = 0; // вид управления на странице: 0 кнопки, 1 трекпад
+static volatile int g_ctrlMode = 0;                           // вид управления на странице: 0 кнопки, 1 трекпад
 static volatile uint32_t g_motorLastMs = 0;
-static uint32_t g_chDuty[4] = {0, 0, 0, 0};   // текущая скважность каналов
-static uint32_t g_chTarget[4] = {0, 0, 0, 0}; // цель по команде/мощности
+static uint32_t g_chDuty[4] = {0, 0, 0, 0};                 // текущая скважность каналов
+static uint32_t g_chTarget[4] = {0, 0, 0, 0};               // цель по команде/мощности
 static volatile uint16_t g_chAccelMs = MOTOR_ACCEL_DEFAULT; // разгон активной команды
 
 // Duty в один канал ШИМ моторов. Каналы 1-4 на таймере 1: канал 0 и таймер 0
@@ -518,7 +519,7 @@ static void settingsLoad()
   g_turnAccelMs = accelValid(a) ? (uint16_t)a : MOTOR_ACCEL_DEFAULT;
 
   g_ctrlMode = (s_prefs.getUChar("ctrl", 0) == 1) ? 1 : 0; // вид управления
-  loadPowers(); // мощности — пара активного вида (свои для кнопок/трекпада)
+  loadPowers();                                            // мощности — пара активного вида (свои для кнопок/трекпада)
 }
 
 // ========================= СТРАНИЦА И СТРИМ ===============================
@@ -1469,14 +1470,17 @@ void setup()
   // Индикация на RGB-светодиоде (Serial-отладки на этой плате нет): синий —
   // начало приёма, от красного к зелёному — прогресс, зелёный — успех (плата
   // сама перезагружается), красный — ошибка.
-  ArduinoOTA.onStart([]() { wsSendColor(0, 0, 255); });
-  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
+  ArduinoOTA.onStart([]()
+                     { wsSendColor(0, 0, 255); });
+  ArduinoOTA.onProgress([](unsigned int done, unsigned int total)
+                        {
     unsigned int pct = total ? done * 100 / total : 0;
     wsSendColor((uint8_t)(255 - 255 * pct / 100),
-                (uint8_t)(255 * pct / 100), 0);
-  });
-  ArduinoOTA.onEnd([]() { wsSendColor(0, 255, 0); });
-  ArduinoOTA.onError([](ota_error_t) { wsSendColor(255, 0, 0); });
+                (uint8_t)(255 * pct / 100), 0); });
+  ArduinoOTA.onEnd([]()
+                   { wsSendColor(0, 255, 0); });
+  ArduinoOTA.onError([](ota_error_t)
+                     { wsSendColor(255, 0, 0); });
   ArduinoOTA.begin();
 #ifdef OTA_PASSWORD
   MDNS.enableArduino(3232, true); // служба _arduino._tcp для Arduino IDE / PlatformIO
