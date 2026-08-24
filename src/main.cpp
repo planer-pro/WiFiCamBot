@@ -10,6 +10,9 @@
  *   /set?rot=N     — поворот кадра на странице: 0/90/180/270 градусов
  *   /set?motor=X   — моторы гусениц (MX1508): f вперёд, b назад,
  *                    l/r поворот влево/вправо (разворот на месте), s стоп
+ *   /set?mix=L,R   — трекпад на странице: раздельная мощность гусениц, %
+ *                    от -100 до 100 (знак = направление); 0,0 — стоп
+ *   /set?ctrl=N    — вид управления на странице: 0 кнопки, 1 трекпад
  *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100)
  *   /set?tspeed=N  — мощность поворотов, % (1..100) — отдельно от хода
  *   /set?accel=N   — разгон моторов вперёд/назад, мс от нуля до полной
@@ -19,9 +22,9 @@
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
  *
- * Настройки (качество, свет+цвет, мощности, разгоны) сохраняются в NVS при
- * каждом изменении и восстанавливаются при включении питания — см.
- * settingsLoad().
+ * Настройки (качество, свет+цвет, мощности, разгоны, вид управления) — в NVS
+ * записываются при каждом изменении и восстанавливаются при включении
+ * питания — см. settingsLoad().
  *
  * Плюс приём прошивки по WiFi (ArduinoOTA, порт 3232) — см. setup().
  *
@@ -245,11 +248,14 @@ static bool accelValid(int ms)
   return false;
 }
 
-static volatile char g_motorCmd = 's';      // f | b | l | r | s
+static volatile char g_motorCmd = 's';      // f | b | l | r | s | m (m — трекпад)
+static volatile int g_mixL = 0;             // трекпад: мощность левой/правой
+static volatile int g_mixR = 0;             // гусеницы, % (-100..100, знак = ход)
 static volatile int g_motorSpeed = 100;     // мощность вперёд/назад, %
 static volatile int g_motorTurnSpeed = 100; // мощность поворотов, % (отдельно)
 static volatile uint16_t g_accelMs = MOTOR_ACCEL_DEFAULT;     // разгон хода
 static volatile uint16_t g_turnAccelMs = MOTOR_ACCEL_DEFAULT; // разгон поворотов
+static volatile int g_ctrlMode = 0; // вид управления на странице: 0 кнопки, 1 трекпад
 static volatile uint32_t g_motorLastMs = 0;
 static uint32_t g_chDuty[4] = {0, 0, 0, 0};   // текущая скважность каналов
 static uint32_t g_chTarget[4] = {0, 0, 0, 0}; // цель по команде/мощности
@@ -294,24 +300,49 @@ static void initMotors()
 // Считает целевую скважность каналов по команде/мощности и применяет её:
 // рост — оставляется на разгон (motorsTick в loop), если он включён;
 // отключённый разгон и ЛЮБОЕ снижение (включая стоп) — применяются сразу.
+// Для трекпада (команда 'm') мощность каждой гусеницы своя (g_mixL/g_mixR,
+// знак = направление) — так смешиваются ход и поворот (езда по дуге).
 static void applyMotors()
 {
-  // ход и повороты — с раздельной мощностью и раздельным разгоном
-  // (поворот на месте обычно требует другой мощности, чем езда)
-  bool turn = (g_motorCmd == 'l' || g_motorCmd == 'r');
-  int pct = turn ? g_motorTurnSpeed : g_motorSpeed;
-  g_chAccelMs = turn ? g_turnAccelMs : g_accelMs;
-  uint32_t duty = (uint32_t)MOTOR_PWM_MAX * pct / 100;
-  char c = g_motorCmd;
-  const bool active[4] = {
-      (c == 'f' || c == 'r'), // левый вперёд
-      (c == 'b' || c == 'l'), // левый назад
-      (c == 'f' || c == 'l'), // правый вперёд
-      (c == 'b' || c == 'r')  // правый назад
-  };
+  uint32_t target[4]; // цель каналов: левый вперёд/назад, правый вперёд/назад
+  if (g_motorCmd == 'm')
+  {
+    // разгон трекпада — более медленный из двух настроенных (консервативнее)
+    g_chAccelMs = g_accelMs > g_turnAccelMs ? g_accelMs : g_turnAccelMs;
+    const int mix[4] = {
+        g_mixL > 0 ? g_mixL : 0,  // левый вперёд
+        g_mixL < 0 ? -g_mixL : 0, // левый назад
+        g_mixR > 0 ? g_mixR : 0,  // правый вперёд
+        g_mixR < 0 ? -g_mixR : 0  // правый назад
+    };
+    for (int i = 0; i < 4; i++)
+    {
+      target[i] = (uint32_t)MOTOR_PWM_MAX * mix[i] / 100;
+    }
+  }
+  else
+  {
+    // ход и повороты — с раздельной мощностью и раздельным разгоном
+    // (поворот на месте обычно требует другой мощности, чем езда)
+    bool turn = (g_motorCmd == 'l' || g_motorCmd == 'r');
+    int pct = turn ? g_motorTurnSpeed : g_motorSpeed;
+    g_chAccelMs = turn ? g_turnAccelMs : g_accelMs;
+    uint32_t duty = (uint32_t)MOTOR_PWM_MAX * pct / 100;
+    char c = g_motorCmd;
+    const bool active[4] = {
+        (c == 'f' || c == 'r'), // левый вперёд
+        (c == 'b' || c == 'l'), // левый назад
+        (c == 'f' || c == 'l'), // правый вперёд
+        (c == 'b' || c == 'r')  // правый назад
+    };
+    for (int i = 0; i < 4; i++)
+    {
+      target[i] = active[i] ? duty : 0;
+    }
+  }
   for (int i = 0; i < 4; i++)
   {
-    g_chTarget[i] = active[i] ? duty : 0;
+    g_chTarget[i] = target[i];
     if (g_chAccelMs == 0 || g_chTarget[i] < g_chDuty[i])
     {
       g_chDuty[i] = g_chTarget[i];
@@ -371,10 +402,31 @@ static bool motorCommand(char c)
   return true;
 }
 
+// Трекпад: раздельная мощность гусениц -100..100% (знак = направление).
+// 0,0 помечаем как 's' — это тот же стоп, что и у кнопок (таймаут команд
+// в loop() и состояние покоя страницы видят одно и то же).
+static void motorMix(int l, int r)
+{
+  if (l > 100)
+    l = 100;
+  else if (l < -100)
+    l = -100;
+  if (r > 100)
+    r = 100;
+  else if (r < -100)
+    r = -100;
+  g_mixL = l;
+  g_mixR = r;
+  g_motorCmd = (l == 0 && r == 0) ? 's' : 'm';
+  g_motorLastMs = millis();
+  applyMotors();
+}
+
 // ==================== СОХРАНЕНИЕ НАСТРОЕК (NVS) ===========================
-// Качество, свет (вкл/выкл + цвет) и обе мощности переживают перезагрузку
-// питания: читаются здесь в setup(), пишутся в NVS при каждом изменении
-// через /set. Направление движения (motor=) не сохраняется — оно мгновенное.
+// Качество, свет (вкл/выкл + цвет), обе мощности, разгоны и вид управления
+// переживают перезагрузку питания: читаются здесь в setup(), пишутся в NVS
+// при каждом изменении через /set. Направление движения (motor=/mix=) не
+// сохраняется — оно мгновенное.
 // Страница при открытии получает текущие значения метками (@Q@ и т.д.), так
 // что после восстановления из NVS браузер всё покажет сам.
 static Preferences s_prefs;
@@ -414,6 +466,8 @@ static void settingsLoad()
   g_accelMs = accelValid(a) ? (uint16_t)a : MOTOR_ACCEL_DEFAULT;
   a = (int)s_prefs.getUShort("taccel", MOTOR_ACCEL_DEFAULT);
   g_turnAccelMs = accelValid(a) ? (uint16_t)a : MOTOR_ACCEL_DEFAULT;
+
+  g_ctrlMode = (s_prefs.getUChar("ctrl", 0) == 1) ? 1 : 0; // вид управления
 }
 
 // ========================= СТРАНИЦА И СТРИМ ===============================
@@ -531,6 +585,25 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
                    color: #d9ffe8;
                    box-shadow: 0 0 16px rgba(46, 204, 113, .3); }
   .pad button.on .k { color: #93d8ab; }
+  /* Трекпад — аналоговая альтернатива кнопкам пульта: палец задаёт
+     направление и мощность, чем дальше от центра — тем быстрее. Крест —
+     ориентир, ручка ездит за пальцем (сама события не ловит). */
+  .track { position: relative; width: 100%; max-width: min(280px, 50vh);
+           aspect-ratio: 1 / 1; background: var(--field);
+           border: 1px solid var(--border); border-radius: 12px;
+           margin: 12px 0 0; touch-action: none;
+           user-select: none; -webkit-user-select: none; }
+  .track.live { border-color: var(--green);
+                box-shadow: 0 0 16px rgba(46, 204, 113, .3); }
+  .track::before, .track::after { content: ''; position: absolute;
+                                  background: var(--border); }
+  .track::before { left: 8px; right: 8px; top: 50%; height: 1px; }
+  .track::after { top: 8px; bottom: 8px; left: 50%; width: 1px; }
+  .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+          border-radius: 50%; background: var(--card);
+          border: 1px solid var(--border-hi);
+          transform: translate(-50%, -50%); pointer-events: none; }
+  .track.live .knob { border-color: var(--green); }
 </style>
 </head>
 <body>
@@ -541,6 +614,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <span></span><button data-dir="f">&#9650;<span class="k">W</span></button><span></span>
   <button data-dir="l">&#9664;<span class="k">A</span></button><button data-dir="b">&#9660;<span class="k">S</span></button><button data-dir="r">&#9654;<span class="k">D</span></button>
 </div>
+<div class="track" id="track" style="display:none"><div class="knob" id="knob"></div></div>
 </div>
 <div class="panel">
 <div class="group">
@@ -579,6 +653,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </div>
 <div class="group">
 <span class="cap">Моторы</span>
+<span class="lbl">Управление</span>
+<select id="ctrl">
+  <option value="0">кнопки (крестовина)</option>
+  <option value="1">трекпад (плавный)</option>
+</select>
 <div class="mgrid">
 <span class="lbl">вперёд/назад</span><span class="lbl">повороты</span>
 <select id="speed">
@@ -751,7 +830,12 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       motorRelease(d);
   });
   // фокус ушёл из окна (Alt-Tab) или страница закрывается — моторы стоп
-  window.addEventListener('blur', function () { stack = []; applyTop(); });
+  window.addEventListener('blur', function () {
+    stack = [];
+    applyTop();
+    if (trackRect)
+      trackEnd(); // палец был на трекпаде — тоже отпустить (стоп)
+  });
   window.addEventListener('pagehide', function () {
     fetch('/set?motor=s', {keepalive: true});
   });
@@ -786,6 +870,94 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   var tAccelSel = document.getElementById('taccel');
   tAccelSel.value = '@B@';
   tAccelSel.onchange = function () { fetch('/set?taccel=' + tAccelSel.value); };
+  // Вид управления — кнопки или трекпад (хранится на плате: метка @P@,
+  // /set?ctrl=). Клавиши (стрелки/WASD) работают в обоих видах — это те же
+  // команды motor=.
+  var ctrlSel = document.getElementById('ctrl');
+  var padEl = document.getElementById('pad');
+  var trackEl = document.getElementById('track');
+  var knob = document.getElementById('knob');
+  // Трекпад: палец задаёт направление И мощность — чем дальше от центра, тем
+  // быстрее. Вертикаль масштабируется списком «вперёд/назад», горизонталь —
+  // «повороты»; поворот подмешивается к ходу (можно вести по дуге). В центре
+  // мёртвая зона — робот стоит. Отпускание — стоп, пока палец удержан,
+  // команда повторяется каждые 500 мс (та же страховка от обрыва, что у
+  // кнопок: плата сама даёт стоп, если команд нет 1.5 с).
+  var trackRect = null; // геометрия касания; не null — палец на трекпаде
+  var trackVec = {x: 0, y: 0};
+  var trackTimer = null;
+  var mixSent = '';
+  function trackMix()
+  {
+    var fwd = Math.round(-trackVec.y * +speedSel.value); // ход, %
+    var trn = Math.round(trackVec.x * +turnSel.value);   // поворот, %
+    function cl(v) { return v > 100 ? 100 : (v < -100 ? -100 : v); }
+    return cl(fwd + trn) + ',' + cl(fwd - trn); // левая, правая гусеница
+  }
+  function trackSend(force)
+  {
+    var m = trackMix();
+    if (force || m !== mixSent)
+    {
+      mixSent = m;
+      fetch('/set?mix=' + m);
+    }
+  }
+  function trackPoint(ev)
+  {
+    var x = (ev.clientX - trackRect.cx) / trackRect.rad;
+    var y = (ev.clientY - trackRect.cy) / trackRect.rad;
+    var len = Math.sqrt(x * x + y * y);
+    if (len > 1) { x /= len; y /= len; } // палец за кругом — ведём по краю
+    if (len < 0.12) { x = 0; y = 0; }    // мёртвая зона в центре
+    trackVec.x = x;
+    trackVec.y = y;
+    knob.style.transform = 'translate(-50%,-50%) translate(' +
+        (x * trackRect.kmax).toFixed(1) + 'px,' +
+        (y * trackRect.kmax).toFixed(1) + 'px)';
+    trackEl.className = (x !== 0 || y !== 0) ? 'track live' : 'track';
+    trackSend(false);
+  }
+  function trackEnd()
+  {
+    if (trackTimer) { clearInterval(trackTimer); trackTimer = null; }
+    trackRect = null;
+    trackVec = {x: 0, y: 0};
+    knob.style.transform = 'translate(-50%,-50%)';
+    trackEl.className = 'track';
+    trackSend(true); // отпустили — микс 0,0, это стоп
+  }
+  trackEl.addEventListener('pointerdown', function (ev) {
+    ev.preventDefault();
+    // захват указателя: продолжаем вести палец и за краем трекпада
+    trackEl.setPointerCapture(ev.pointerId);
+    var r = trackEl.getBoundingClientRect();
+    trackRect = {cx: r.left + r.width / 2, cy: r.top + r.height / 2,
+                 rad: r.width / 2, kmax: r.width / 2 - 32};
+    trackTimer = setInterval(function () { trackSend(true); }, 500);
+    trackPoint(ev);
+  });
+  trackEl.addEventListener('pointermove', function (ev) {
+    if (trackRect)
+      trackPoint(ev); // без нажатия (просто мышь над трекпадом) — игнор
+  });
+  trackEl.addEventListener('pointerup', trackEnd);
+  trackEl.addEventListener('pointercancel', trackEnd);
+  trackEl.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+  function setCtrl(mode)
+  {
+    var track = (mode === '1');
+    padEl.style.display = track ? 'none' : 'grid';
+    trackEl.style.display = track ? 'block' : 'none';
+    if (!track && trackRect)
+      trackEnd(); // ушли с трекпада во время движения — остановиться
+  }
+  ctrlSel.value = '@P@';
+  setCtrl(ctrlSel.value);
+  ctrlSel.onchange = function () {
+    setCtrl(ctrlSel.value);
+    fetch('/set?ctrl=' + ctrlSel.value);
+  };
   motorUI();
 </script>
 </body>
@@ -872,7 +1044,7 @@ static bool applyQuality(int level)
 // Цвет применяется сразу (если свет выключен — запоминается до включения).
 static esp_err_t set_handler(httpd_req_t *req)
 {
-  char query[64] = {0}, val[8] = {0};
+  char query[64] = {0}, val[8] = {0}, mixv[12] = {0};
   if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK)
   {
     if (httpd_query_key_value(query, "quality", val, sizeof(val)) == ESP_OK)
@@ -919,6 +1091,28 @@ static esp_err_t set_handler(httpd_req_t *req)
     {
       if (motorCommand(val[0]))
       {
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
+    else if (httpd_query_key_value(query, "mix", mixv, sizeof(mixv)) == ESP_OK)
+    {
+      char *comma = strchr(mixv, ','); // "L,R" — мощности левой/правой гусениц
+      if (comma)
+      {
+        *comma = '\0';
+        motorMix(atoi(mixv), atoi(comma + 1));
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+      }
+    }
+    else if (httpd_query_key_value(query, "ctrl", val, sizeof(val)) == ESP_OK)
+    {
+      int m = atoi(val);
+      if (m == 0 || m == 1)
+      {
+        g_ctrlMode = m;
+        s_prefs.putUChar("ctrl", (uint8_t)m);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
@@ -981,11 +1175,14 @@ static esp_err_t index_handler(httpd_req_t *req)
   httpd_resp_set_type(req, "text/html");
   // страницу не кэшировать: после перепрошивки JS должен обновиться
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@/@T@/@R@/@A@/@B@
-  const char *marks[8] = {"@Q@", "@L@", "@C@", "@S@", "@T@", "@R@", "@A@", "@B@"};
-  char qbuf[4], lbuf[4], cbuf[4], sbuf[4], tbuf[4], rbuf[4], abuf[8], bbuf[8];
-  const char *vals[8] = {qbuf, lbuf, cbuf, sbuf, tbuf, rbuf, abuf, bbuf};
-  int lens[8] = {
+  // подставляем текущие значения вместо меток @Q@/@L@/@C@/@S@/@T@/@R@/@A@/@B@/
+  // @P@ (@A@/@B@ — разгоны хода/поворотов, @P@ — вид управления)
+  const char *marks[9] = {"@Q@", "@L@", "@C@", "@S@", "@T@", "@R@", "@A@", "@B@",
+                          "@P@"};
+  char qbuf[4], lbuf[4], cbuf[4], sbuf[4], tbuf[4], rbuf[4], abuf[8], bbuf[8],
+      pbuf[4];
+  const char *vals[9] = {qbuf, lbuf, cbuf, sbuf, tbuf, rbuf, abuf, bbuf, pbuf};
+  int lens[9] = {
       snprintf(qbuf, sizeof(qbuf), "%d", (int)g_quality),
       snprintf(lbuf, sizeof(lbuf), "%d", g_lightOn ? 1 : 0),
       snprintf(cbuf, sizeof(cbuf), "%d", (int)g_lightColor),
@@ -993,14 +1190,15 @@ static esp_err_t index_handler(httpd_req_t *req)
       snprintf(tbuf, sizeof(tbuf), "%d", (int)g_motorTurnSpeed),
       snprintf(rbuf, sizeof(rbuf), "%d", (int)g_rotation),
       snprintf(abuf, sizeof(abuf), "%d", (int)g_accelMs),
-      snprintf(bbuf, sizeof(bbuf), "%d", (int)g_turnAccelMs)};
+      snprintf(bbuf, sizeof(bbuf), "%d", (int)g_turnAccelMs),
+      snprintf(pbuf, sizeof(pbuf), "%d", (int)g_ctrlMode)};
   const char *p = INDEX_HTML;
   while (*p)
   {
     // ищем ближайшую метку от текущей позиции
     const char *best = NULL;
     int bi = -1;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 9; i++)
     {
       if (lens[i] <= 0)
         continue;
