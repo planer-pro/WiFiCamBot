@@ -326,9 +326,9 @@ static void applyMotors()
   {
     // ход и повороты — с раздельной мощностью и раздельным разгоном
     // (поворот на месте обычно требует другой мощности, чем езда).
-    // В режиме трекпада разгон исключён из управления ПОЛНОСТЬЮ (не только
-    // для трекпада, но и для клавиш): любое движение применяется мгновенно;
-    // в режиме кнопок разгон работает как настроено.
+    // В режиме трекпада разгон ведёт себя как позиция «отключено» у списков
+    // разгона — и для трекпада, и для клавиш: любое движение мгновенное.
+    // В режиме кнопок разгон работает как настроено.
     bool turn = (g_motorCmd == 'l' || g_motorCmd == 'r');
     int pct = turn ? g_motorTurnSpeed : g_motorSpeed;
     g_chAccelMs = (g_ctrlMode == 1) ? 0 : (turn ? g_turnAccelMs : g_accelMs);
@@ -957,16 +957,33 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   trackEl.addEventListener('pointerup', trackEnd);
   trackEl.addEventListener('pointercancel', trackEnd);
   trackEl.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+  var accelSaved = null; // разгоны до входа в режим трекпада (вернуть обратно)
   function setCtrl(mode)
   {
     var track = (mode === '1');
     padEl.style.display = track ? 'none' : 'grid';
     trackEl.style.display = track ? 'block' : 'none';
     // мощности/разгоны — настройки кнопочного пульта, трекпаду не нужны:
-    // в его режиме блок гасим, поля делаем неактивными
+    // в его режиме блок гасим, поля делаем неактивными. Разгон при этом и
+    // в прошивке ведёт себя как «отключено» — в полях честно показываем ту
+    // же позицию, а сохранённые значения возвращаем в режиме кнопок
+    // (на плату ничего не пишем).
     mdrvEl.className = track ? 'mgrid off' : 'mgrid';
     speedSel.disabled = turnSel.disabled = track;
     accelSel.disabled = tAccelSel.disabled = track;
+    if (track)
+    {
+      if (!accelSaved)
+        accelSaved = [accelSel.value, tAccelSel.value];
+      accelSel.value = '0';
+      tAccelSel.value = '0';
+    }
+    else if (accelSaved)
+    {
+      accelSel.value = accelSaved[0];
+      tAccelSel.value = accelSaved[1];
+      accelSaved = null;
+    }
     if (!track && trackRect)
       trackEnd(); // ушли с трекпада во время движения — остановиться
   }
