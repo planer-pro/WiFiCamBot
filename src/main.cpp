@@ -499,8 +499,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   .group .lbl { font-size: 11px; color: var(--muted); margin: 3px 0 0; }
   .pair { display: flex; gap: 6px; align-items: center; }
   .pair select { flex: 1; min-width: 0; }
-  /* Кнопка света с точкой-индикатором выбранного цвета */
-  #light { display: inline-flex; align-items: center; gap: 7px; flex: none; }
+  /* Кнопка света с точкой-индикатором выбранного цвета; ширина зафиксирована
+     под «выкл» — при переключении вкл/выкл кнопка не меняет длину и не
+     сдвигает соседний список цветов */
+  #light { display: inline-flex; align-items: center; justify-content: center;
+           gap: 7px; flex: none; min-width: 82px; }
   .dot { width: 10px; height: 10px; border-radius: 50%;
          border: 1px solid var(--muted); background: transparent; flex: none; }
   button.on { background: #3a2b09; border-color: var(--amber); color: #ffd98a;
