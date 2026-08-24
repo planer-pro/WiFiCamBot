@@ -607,7 +607,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   /* Числовое поле (точка страгивания) — в стиле селектов, без стрелок
      прокрутки: значение набирается, а не листается */
   input[type=number] { appearance: textfield; -moz-appearance: textfield;
-           background-color: var(--field); color: var(--text);
+           box-sizing: border-box; background-color: var(--field);
+           color: var(--text);
            border: 1px solid var(--border); border-radius: 8px;
            padding: 6px 9px; font-size: 13px; width: 100%;
            transition: border-color .15s, box-shadow .15s; }
@@ -675,12 +676,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   .arow { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 6px;
           grid-column: 1 / 3; }
   .arow.off { opacity: .45; }
-  /* Точка страгивания — одна на оба столбца: подпись слева, узкое поле
-     справа (оно общее для хода и поворотов — свойство моторов, а не вида
-     управления) */
-  .srow { display: grid; grid-template-columns: 1fr 74px; gap: 5px 6px;
-          align-items: center; grid-column: 1 / 3; }
-  .srow .lbl { margin: 0; }
+  /* Точка страгивания — последняя строка группы «Моторы», на оба столбца:
+     подпись сверху, поле на всю ширину — как остальные поля карточки
+     (значение одно: свойство моторов, а не вида управления) */
+  .srow { display: grid; grid-template-columns: 1fr; gap: 5px;
+          grid-column: 1 / 3; }
   select:disabled, select:disabled:hover { border-color: var(--border);
                                            color: var(--muted);
                                            cursor: default; }
@@ -792,10 +792,6 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="75">75%</option>
   <option value="100">100%</option>
 </select>
-<div class="srow">
-<span class="lbl" title="Мощность ШИМ, с которой гусеницы трогаются с места: всё ниже танк стоит. Шкала сдвигается — 1..100% мощности ложатся на диапазон от этой точки до полной">страгивание, %</span>
-<input type="number" id="start" min="0" max="90" step="1" value="@K@">
-</div>
 <div class="arow" id="arow">
 <span class="lbl">разгон</span><span class="lbl">разгон</span>
 <select id="accel">
@@ -812,6 +808,10 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="1000">1 с</option>
   <option value="2000">2 с</option>
 </select>
+</div>
+<div class="srow">
+<span class="lbl" title="Мощность ШИМ, с которой гусеницы трогаются с места: всё ниже танк стоит. Шкала сдвигается — 1..100% мощности ложатся на диапазон от этой точки до полной">страгивание, %</span>
+<input type="number" id="start" min="0" max="90" step="1" value="@K@">
 </div>
 </div>
 </div>
