@@ -60,11 +60,24 @@
 // удалось, плата поднимает настроечную точку доступа WIFI_AP_NAME (имя —
 // в src/wifi_secrets.h), в ней открывается страница выбора сети; выбранная
 // сеть и пароль сохраняются в энергонезависимой памяти платы.
-#define WIFI_CONNECT_TIMEOUT_MS 20000 // столько ждём сеть до подъёма портала
-#define WIFI_FAIL_RESTART_MS 30000    // связь пропала так надолго — перезапуск
+#define WIFI_CONNECT_TIMEOUT_MS 15000 // столько ждём сеть до подъёма портала
+#define WIFI_PORTAL_TIMEOUT_S 120     // портал без действий (сек) — перезапуск
+#define WIFI_FAIL_PORTAL_MS 20000     // связь пропала так надолго — портал
 
 static void wsSendColor(uint8_t r, uint8_t g, uint8_t b); // ниже по коду
 static void applyLight();                                 // ниже по коду
+
+// Общие настройки WiFiManager для обоих подъёмов портала: при старте
+// (autoConnect из connectWiFi) и по пропаданию сети (startConfigPortal
+// из loop). Таймауты: попытка подключения — WIFI_CONNECT_TIMEOUT_MS,
+// портал без действий — WIFI_PORTAL_TIMEOUT_S, потом перезапуск.
+static void wmConfigure(WiFiManager &wm)
+{
+  wm.setConnectTimeout(WIFI_CONNECT_TIMEOUT_MS / 1000);
+  wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
+  wm.setBreakAfterConfig(true);   // неудачные новые данные — снова в цикл попыток
+  wm.setAPCallback([](WiFiManager *) { wsSendColor(0, 0, 255); }); // портал — синий
+}
 
 // Подключение к WiFi; при неудаче — настроечная точка доступа (WiFiManager).
 // Возвращает управление только когда сеть подключена.
@@ -80,10 +93,7 @@ static void connectWiFi()
   // настроечную точку доступа WIFI_AP_NAME со страницей выбора сети;
   // выбранное сохранится в NVS и плата подключится уже к нему.
   WiFiManager wm;
-  wm.setConnectTimeout(WIFI_CONNECT_TIMEOUT_MS / 1000);
-  wm.setConfigPortalTimeout(180); // портал без действий 3 мин — начать заново
-  wm.setBreakAfterConfig(true);   // неудачные новые данные — снова в цикл попыток
-  wm.setAPCallback([](WiFiManager *) { wsSendColor(0, 0, 255); }); // портал — синий
+  wmConfigure(wm);
   if (!wm.autoConnect(WIFI_AP_NAME))
   {
     ESP.restart(); // таймаут портала — перезапуск и новая попытка
@@ -1355,32 +1365,51 @@ static esp_err_t stream_handler(httpd_req_t *req)
 // (проверено на железе: /set при открытом /stream не отвечает, после закрытия
 // отвечает мгновенно). Поэтому ДВА экземпляра сервера: порт 80 — страница и
 // управление, порт 81 — только стрим. Так же сделано в CameraWebServer.
+static httpd_handle_t s_httpdMain = NULL;   // порт 80: страница и /set
+static httpd_handle_t s_httpdStream = NULL; // порт 81: стрим
+
 static void startWebServer()
 {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
 
-  httpd_handle_t server = NULL;
-  if (httpd_start(&server, &config) == ESP_OK)
+  if (httpd_start(&s_httpdMain, &config) == ESP_OK)
   {
     const httpd_uri_t uri_index = {
         .uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
     const httpd_uri_t uri_set = {
         .uri = "/set", .method = HTTP_GET, .handler = set_handler, .user_ctx = NULL};
-    httpd_register_uri_handler(server, &uri_index);
-    httpd_register_uri_handler(server, &uri_set);
+    httpd_register_uri_handler(s_httpdMain, &uri_index);
+    httpd_register_uri_handler(s_httpdMain, &uri_set);
   }
 
   httpd_config_t streamConfig = HTTPD_DEFAULT_CONFIG();
   streamConfig.server_port = 81;
   streamConfig.ctrl_port += 1; // управляющий сокет второго сервера не должен совпадать
 
-  httpd_handle_t streamServer = NULL;
-  if (httpd_start(&streamServer, &streamConfig) == ESP_OK)
+  if (httpd_start(&s_httpdStream, &streamConfig) == ESP_OK)
   {
     const httpd_uri_t uri_stream = {
         .uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL};
-    httpd_register_uri_handler(streamServer, &uri_stream);
+    httpd_register_uri_handler(s_httpdStream, &uri_stream);
+  }
+}
+
+// Останавливает оба сервера (стрим-хэндлер бесконечный, но по закрытию
+// сокета его отправки падают и он выходит). Нужна перед порталом
+// WiFiManager из loop(): его страница занимает порт 80 — не остановив
+// наши серверы, портал не поднялся бы.
+static void stopWebServer()
+{
+  if (s_httpdStream)
+  {
+    httpd_stop(s_httpdStream);
+    s_httpdStream = NULL;
+  }
+  if (s_httpdMain)
+  {
+    httpd_stop(s_httpdMain);
+    s_httpdMain = NULL;
   }
 }
 
@@ -1444,23 +1473,36 @@ void loop()
   ArduinoOTA.handle();
 
   // Контроль связи: короткие пропадания лечит автореконнект ядра; если сети
-  // нет дольше WIFI_FAIL_RESTART_MS — перезапуск (новая попытка подключиться,
-  // при неудаче поднимется настроечная точка доступа WiFiManager).
+  // нет дольше WIFI_FAIL_PORTAL_MS — поднимаем настроечную точку доступа
+  // прямо здесь, не дожидаясь перезагрузки (без сети управлять роботом всё
+  // равно нельзя). Портал ждёт выбора сети WIFI_PORTAL_TIMEOUT_S, при
+  // таймауте — перезапуск и новая попытка. Серверы на время портала
+  // останавливаем (порт 80 нужен порталу), после подключения поднимаем
+  // заново. Блокирующий вызов: пока портал открыт, loop стоит — моторы к
+  // этому моменту уже остановлены страховкой команд (1.5 с без команд).
   static uint32_t wifiDownSince = 0;
   if (WiFi.status() == WL_CONNECTED)
   {
     wifiDownSince = 0;
   }
-  else
+  else if (wifiDownSince == 0)
   {
-    if (wifiDownSince == 0)
+    wifiDownSince = millis();
+  }
+  else if (millis() - wifiDownSince > WIFI_FAIL_PORTAL_MS)
+  {
+    wifiDownSince = 0;
+    stopWebServer();
+    WiFiManager wm;
+    wmConfigure(wm);
+    if (!wm.startConfigPortal(WIFI_AP_NAME))
     {
-      wifiDownSince = millis();
+      ESP.restart(); // таймаут портала — перезапуск и новая попытка
     }
-    else if (millis() - wifiDownSince > WIFI_FAIL_RESTART_MS)
-    {
-      ESP.restart();
-    }
+    // Выбрали сеть и подключились: возвращаем свет (гасим синий индикатор
+    // портала) и серверы — работаем дальше без перезагрузки.
+    applyLight();
+    startWebServer();
   }
 
   // Страховка от «залипания» команды: пока страница удерживает направление,
