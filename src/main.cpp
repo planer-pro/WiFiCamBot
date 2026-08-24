@@ -307,8 +307,9 @@ static void applyMotors()
   uint32_t target[4]; // цель каналов: левый вперёд/назад, правый вперёд/назад
   if (g_motorCmd == 'm')
   {
-    // разгон трекпада — более медленный из двух настроенных (консервативнее)
-    g_chAccelMs = g_accelMs > g_turnAccelMs ? g_accelMs : g_turnAccelMs;
+    // трекпад без разгона: палец сам ведёт плавно, аппаратный разгон здесь —
+    // только запаздывание; мощность тоже не ограничиваем — её задаёт палец
+    g_chAccelMs = 0;
     const int mix[4] = {
         g_mixL > 0 ? g_mixL : 0,  // левый вперёд
         g_mixL < 0 ? -g_mixL : 0, // левый назад
@@ -564,6 +565,12 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
               box-shadow: 0 0 12px rgba(245, 166, 35, .25); }
   /* Моторы: мощности и разгоны — сетка 2x2, подписи над полями */
   .mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 6px; }
+  /* .off — режим трекпада: мощности и разгоны на него не действуют (палец
+     заменяет их) — блок гасим, поля отключаем */
+  .mgrid.off { opacity: .45; }
+  select:disabled, select:disabled:hover { border-color: var(--border);
+                                           color: var(--muted);
+                                           cursor: default; }
   @media (max-width: 620px) {
     .row { flex-direction: column; align-items: center; }
     .stage { height: 55vh; }
@@ -658,7 +665,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="0">кнопки (крестовина)</option>
   <option value="1">трекпад (плавный)</option>
 </select>
-<div class="mgrid">
+<div class="mgrid" id="mdrv">
 <span class="lbl">вперёд/назад</span><span class="lbl">повороты</span>
 <select id="speed">
   <option value="25">25%</option>
@@ -875,22 +882,24 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   // команды motor=.
   var ctrlSel = document.getElementById('ctrl');
   var padEl = document.getElementById('pad');
+  var mdrvEl = document.getElementById('mdrv');
   var trackEl = document.getElementById('track');
   var knob = document.getElementById('knob');
-  // Трекпад: палец задаёт направление И мощность — чем дальше от центра, тем
-  // быстрее. Вертикаль масштабируется списком «вперёд/назад», горизонталь —
-  // «повороты»; поворот подмешивается к ходу (можно вести по дуге). В центре
-  // мёртвая зона — робот стоит. Отпускание — стоп, пока палец удержан,
-  // команда повторяется каждые 500 мс (та же страховка от обрыва, что у
-  // кнопок: плата сама даёт стоп, если команд нет 1.5 с).
+  // Трекпад: палец задаёт направление И мощность — отклонение напрямую
+  // равно мощности 0-100% (настройки мощности и разгона на трекпад не
+  // действуют — палец их заменяет, блок на странице гасится). Поворот
+  // подмешивается к ходу (можно вести по дуге). В центре мёртвая зона —
+  // робот стоит. Отпускание — стоп, пока палец удержан, команда
+  // повторяется каждые 500 мс (та же страховка от обрыва, что у кнопок:
+  // плата сама даёт стоп, если команд нет 1.5 с).
   var trackRect = null; // геометрия касания; не null — палец на трекпаде
   var trackVec = {x: 0, y: 0};
   var trackTimer = null;
   var mixSent = '';
   function trackMix()
   {
-    var fwd = Math.round(-trackVec.y * +speedSel.value); // ход, %
-    var trn = Math.round(trackVec.x * +turnSel.value);   // поворот, %
+    var fwd = Math.round(-trackVec.y * 100); // ход, % (палец = мощность)
+    var trn = Math.round(trackVec.x * 100);  // поворот, %
     function cl(v) { return v > 100 ? 100 : (v < -100 ? -100 : v); }
     return cl(fwd + trn) + ',' + cl(fwd - trn); // левая, правая гусеница
   }
@@ -949,6 +958,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     var track = (mode === '1');
     padEl.style.display = track ? 'none' : 'grid';
     trackEl.style.display = track ? 'block' : 'none';
+    // мощности/разгоны — настройки кнопочного пульта, трекпаду не нужны:
+    // в его режиме блок гасим, поля делаем неактивными
+    mdrvEl.className = track ? 'mgrid off' : 'mgrid';
+    speedSel.disabled = turnSel.disabled = track;
+    accelSel.disabled = tAccelSel.disabled = track;
     if (!track && trackRect)
       trackEnd(); // ушли с трекпада во время движения — остановиться
   }
