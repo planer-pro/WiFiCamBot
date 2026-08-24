@@ -13,8 +13,10 @@
  *   /set?mix=L,R   — трекпад на странице: раздельная мощность гусениц, %
  *                    от -100 до 100 (знак = направление); 0,0 — стоп
  *   /set?ctrl=N    — вид управления на странице: 0 кнопки, 1 трекпад
- *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100)
- *   /set?tspeed=N  — мощность поворотов, % (1..100) — отдельно от хода
+ *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100; в трекпаде —
+ *                    предел крайних положений по вертикали)
+ *   /set?tspeed=N  — мощность поворотов, % (1..100; в трекпаде — предел
+ *                    по горизонтали) — отдельно от хода
  *   /set?accel=N   — разгон моторов вперёд/назад, мс от нуля до полной
  *                    мощности (0 — отключено; варианты — MOTOR_ACCEL_STEPS)
  *   /set?taccel=N  — разгон поворотов, мс (отдельно от хода); разгоны
@@ -326,12 +328,14 @@ static void applyMotors()
   {
     // ход и повороты — с раздельной мощностью и раздельным разгоном
     // (поворот на месте обычно требует другой мощности, чем езда).
-    // В режиме трекпада до сюда доходят только клавиши (палец идёт веткой
-    // 'm' выше) — и для них действует то же, что показывают погашенные
-    // поля страницы: мощность 100%, разгон как «отключено» (мгновенно).
-    // В режиме кнопок мощность и разгон работают как настроено.
+    // Мощность действует в обоих видах управления (в трекпаде ею же
+    // ограничиваются крайние положения — страницу шлёт уже умноженный
+    // микс, сюда доходят только клавиши). Разгон в режиме трекпада
+    // ведёт себя как позиция «отключено» у списков разгона — и для
+    // трекпада, и для клавиш: любое движение мгновенное. В режиме
+    // кнопок мощность и разгон работают как настроено.
     bool turn = (g_motorCmd == 'l' || g_motorCmd == 'r');
-    int pct = (g_ctrlMode == 1) ? 100 : (turn ? g_motorTurnSpeed : g_motorSpeed);
+    int pct = turn ? g_motorTurnSpeed : g_motorSpeed;
     g_chAccelMs = (g_ctrlMode == 1) ? 0 : (turn ? g_turnAccelMs : g_accelMs);
     uint32_t duty = (uint32_t)MOTOR_PWM_MAX * pct / 100;
     char c = g_motorCmd;
@@ -570,9 +574,13 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
               box-shadow: 0 0 12px rgba(245, 166, 35, .25); }
   /* Моторы: мощности и разгоны — сетка 2x2, подписи над полями */
   .mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 6px; }
-  /* .off — режим трекпада: мощности и разгоны на него не действуют (палец
-     заменяет их) — блок гасим, поля отключаем */
-  .mgrid.off { opacity: .45; }
+  /* Строка разгона — отдельная сетка на оба столбца родителя (иначе она
+     стала бы одной ячейкой). .off — режим трекпада: разгон ему не нужен,
+     строку гасим, поля отключаем (мощности при этом остаются активными —
+     они ограничивают край круга трекпада) */
+  .arow { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 6px;
+          grid-column: 1 / 3; }
+  .arow.off { opacity: .45; }
   select:disabled, select:disabled:hover { border-color: var(--border);
                                            color: var(--muted);
                                            cursor: default; }
@@ -670,7 +678,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="0">кнопки (крестовина)</option>
   <option value="1">трекпад (плавный)</option>
 </select>
-<div class="mgrid" id="mdrv">
+<div class="mgrid">
 <span class="lbl">вперёд/назад</span><span class="lbl">повороты</span>
 <select id="speed">
   <option value="25">25%</option>
@@ -684,6 +692,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="75">75%</option>
   <option value="100">100%</option>
 </select>
+<div class="arow" id="arow">
 <span class="lbl">разгон</span><span class="lbl">разгон</span>
 <select id="accel">
   <option value="0">отключено</option>
@@ -699,6 +708,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <option value="1000">1 с</option>
   <option value="2000">2 с</option>
 </select>
+</div>
 </div>
 </div>
 </div>
@@ -887,12 +897,14 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   // команды motor= (в режиме трекпада клавиши едут на 100% и без разгона).
   var ctrlSel = document.getElementById('ctrl');
   var padEl = document.getElementById('pad');
-  var mdrvEl = document.getElementById('mdrv');
+  var arowEl = document.getElementById('arow');
   var trackEl = document.getElementById('track');
   var knob = document.getElementById('knob');
-  // Трекпад: палец задаёт направление И мощность — отклонение напрямую
-  // равно мощности 0-100% (настройки мощности и разгона на трекпад не
-  // действуют — палец их заменяет, блок на странице гасится). Поворот
+  // Трекпад: палец задаёт направление И мощность — отклонение от центра
+  // даёт процент от настроенного предела (край круга = выбранная в списке
+  // мощность; вертикаль — вперёд/назад, горизонталь — повороты, списки
+  // мощности при этом активны и менять их можно на лету). Разгон на
+  // трекпад не действует — поле гасится. Поворот
   // подмешивается к ходу (можно вести по дуге). В центре мёртвая зона —
   // робот стоит. Отпускание — стоп, пока палец удержан, команда
   // повторяется каждые 500 мс (та же страховка от обрыва, что у кнопок:
@@ -903,8 +915,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   var mixSent = '';
   function trackMix()
   {
-    var fwd = Math.round(-trackVec.y * 100); // ход, % (палец = мощность)
-    var trn = Math.round(trackVec.x * 100);  // поворот, %
+    // предел хода/поворота — из списков мощности (в режиме трекпада они
+    // активны и ограничивают край круга); .value — строка, умножение
+    // само приводит к числу
+    var fwd = Math.round(-trackVec.y * speedSel.value); // ход, %
+    var trn = Math.round(trackVec.x * turnSel.value);   // поворот, %
     function cl(v) { return v > 100 ? 100 : (v < -100 ? -100 : v); }
     return cl(fwd + trn) + ',' + cl(fwd - trn); // левая, правая гусеница
   }
@@ -958,38 +973,33 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   trackEl.addEventListener('pointerup', trackEnd);
   trackEl.addEventListener('pointercancel', trackEnd);
   trackEl.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
-  var btnSaved = null; // мощности/разгоны до входа в трекпад (вернуть обратно)
+  var accelSaved = null; // разгоны до входа в режим трекпада (вернуть обратно)
   function setCtrl(mode)
   {
     var track = (mode === '1');
     padEl.style.display = track ? 'none' : 'grid';
     trackEl.style.display = track ? 'block' : 'none';
-    // мощности/разгоны — настройки кнопочного пульта, трекпаду не нужны:
-    // в его режиме блок гасим, поля делаем неактивными и показываем в них
-    // то, что трекпад реально делает: мощность 100% (её задаёт палец/мышь,
-    // край круга = максимум), разгон «отключено» (в прошивке так же — любое
-    // движение мгновенное). Сохранённые значения возвращаем в режиме кнопок
-    // (на плату ничего не пишем).
-    mdrvEl.className = track ? 'mgrid off' : 'mgrid';
-    speedSel.disabled = turnSel.disabled = track;
+    // мощности действуют в обоих видах управления: кнопкам задают скважность,
+    // трекпаду — предел крайних положений (край круга = выбранная мощность),
+    // поля всегда активны. Разгон — настройка кнопочного пульта: в режиме
+    // трекпада строку гасим, поля делаем неактивными и показываем
+    // «отключено» — в прошивке так же (любое движение мгновенное и для
+    // трекпада, и для клавиш). Сохранённые разгоны возвращаем в режиме
+    // кнопок (на плату ничего не пишем).
+    arowEl.className = track ? 'arow off' : 'arow';
     accelSel.disabled = tAccelSel.disabled = track;
     if (track)
     {
-      if (!btnSaved)
-        btnSaved = [speedSel.value, turnSel.value,
-                    accelSel.value, tAccelSel.value];
-      speedSel.value = '100';
-      turnSel.value = '100';
+      if (!accelSaved)
+        accelSaved = [accelSel.value, tAccelSel.value];
       accelSel.value = '0';
       tAccelSel.value = '0';
     }
-    else if (btnSaved)
+    else if (accelSaved)
     {
-      speedSel.value = btnSaved[0];
-      turnSel.value = btnSaved[1];
-      accelSel.value = btnSaved[2];
-      tAccelSel.value = btnSaved[3];
-      btnSaved = null;
+      accelSel.value = accelSaved[0];
+      tAccelSel.value = accelSaved[1];
+      accelSaved = null;
     }
     if (!track && trackRect)
       trackEnd(); // ушли с трекпада во время движения — остановиться
