@@ -1138,7 +1138,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   // ручка ходит за стиком, касания круг больше не ловит. Браузер отдаёт
   // геймпад только после нажатия любой кнопки на нём. Нюанс Chrome и
   // Firefox: Gamepad API доступен лишь HTTPS-страницам, по обычному HTTP
-  // геймпад виден не будет — строка состояния подсказывает обходной путь.
+  // геймпад виден не будет. В Chrome обход — флаг
+  // unsafely-treat-insecure-origin-as-secure, в Firefox обхода НЕТ —
+  // открыть страницу в Chromium или пробросить робота на localhost
+  // (localhost браузеры считают безопасным контекстом); строка состояния
+  // подсказывает то же самое.
   var gstatEl = document.getElementById('gstat');
   var gpadTimer = null; // опрос стика; не null — режим геймпада активен
   var gpadLastMs = 0;   // когда шла последняя команда (повтор — 500 мс)
@@ -1166,9 +1170,10 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       trackEl.className = 'track ro';
       gstatEl.textContent = window.isSecureContext
           ? 'геймпад не найден — нажмите любую кнопку на нём'
-          : 'браузер не даёт Gamepad API по HTTP (нужен HTTPS; в Chrome: '
-            + 'флаг unsafely-treat-insecure-origin-as-secure с адресом '
-            + 'робота, потом перезапуск)';
+          : 'по HTTP браузер не даёт Gamepad API: в Firefox обхода нет — '
+            + 'откройте страницу в Chrome/Chromium (флаг '
+            + 'unsafely-treat-insecure-origin-as-secure с адресом робота) '
+            + 'или через localhost';
       gstatEl.className = 'gstat';
       return;
     }
