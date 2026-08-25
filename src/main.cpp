@@ -10,20 +10,25 @@
  *   /set?rot=N     — поворот кадра на странице: 0/90/180/270 градусов
  *   /set?motor=X   — моторы гусениц (MX1508): f вперёд, b назад,
  *                    l/r поворот влево/вправо (разворот на месте), s стоп
- *   /set?mix=L,R   — трекпад на странице: раздельная мощность гусениц, %
- *                    от -100 до 100 (знак = направление); 0,0 — стоп
- *   /set?ctrl=N    — вид управления на странице: 0 кнопки, 1 трекпад;
+ *   /set?mix=L,R   — трекпад/геймпад на странице: раздельная мощность
+ *                    гусениц, % от -100 до 100 (знак = направление); 0,0 — стоп
+ *   /set?ctrl=N    — вид управления на странице: 0 кнопки, 1 трекпад,
+ *                    2 геймпад (Bluetooth-геймпад подключается к устройству
+ *                    С БРАУЗЕРОМ, робот про него не знает: страница читает
+ *                    его левый стик через Gamepad API и шлёт те же mix=);
  *                    в ответе — мощности выбранного вида "ход,поворот"
- *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100; в трекпаде —
- *                    предел крайних положений по вертикали); у каждого вида
- *                    управления мощности свои, пишутся раздельно
- *   /set?tspeed=N  — мощность поворотов, % (1..100; в трекпаде — предел
- *                    по горизонтали) — отдельно от хода
+ *   /set?speed=N   — мощность моторов вперёд/назад, % (1..100; в трекпаде
+ *                    и геймпаде — предел крайних положений стика); у
+ *                    кнопочного и аналоговых видов мощности свои, пишутся
+ *                    раздельно
+ *   /set?tspeed=N  — мощность поворотов, % (1..100; в трекпаде и геймпаде —
+ *                    предел по горизонтали стика) — отдельно от хода
  *   /set?accel=N   — разгон моторов вперёд/назад, мс набора мощности до
  *                    установленного значения (0 — отключено; варианты —
  *                    MOTOR_ACCEL_STEPS)
  *   /set?taccel=N  — разгон поворотов, мс (отдельно от хода); разгоны
- *                    действуют только в режиме кнопок — трекпад без них
+ *                    действуют только в режиме кнопок — трекпад и геймпад
+ *                    без них
  *   /set?start=N   — точка страгивания, % ШИМ (0..90): мощность, ниже
  *                    которой танк не трогается; шкала сдвигается так, что
  *                    1..100 % ложатся на [точка ... полная], 0 — как раньше
@@ -31,8 +36,9 @@
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
  *
- * Настройки (качество, свет+цвет, мощности — свои у каждого вида управления,
- * разгоны, точка страгивания, вид управления) — в NVS
+ * Настройки (качество, свет+цвет, мощности — свои у кнопочного и у
+ * аналоговых видов управления, разгоны, точка страгивания, вид
+ * управления) — в NVS
  * записываются при каждом изменении и восстанавливаются при включении
  * питания — см. settingsLoad().
  *
@@ -298,7 +304,7 @@ static volatile int g_motorTurnSpeed = 100;                   // мощност�
 static volatile int g_motorStartPct = 0;                      // точка страгивания, % ШИМ
 static volatile uint16_t g_accelMs = MOTOR_ACCEL_DEFAULT;     // разгон хода
 static volatile uint16_t g_turnAccelMs = MOTOR_ACCEL_DEFAULT; // разгон поворотов
-static volatile int g_ctrlMode = 0;                           // вид управления на странице: 0 кнопки, 1 трекпад
+static volatile int g_ctrlMode = 0; // вид управления на странице: 0 кнопки, 1 трекпад, 2 геймпад
 static volatile uint32_t g_motorLastMs = 0;
 static uint32_t g_chDuty[4] = {0, 0, 0, 0};                 // текущая скважность каналов
 static uint32_t g_chTarget[4] = {0, 0, 0, 0};               // цель по команде/мощности
@@ -366,8 +372,9 @@ static void applyMotors()
   uint32_t target[4]; // цель каналов: левый вперёд/назад, правый вперёд/назад
   if (g_motorCmd == 'm')
   {
-    // трекпад без разгона: палец сам ведёт плавно, аппаратный разгон здесь —
-    // только запаздывание; мощность тоже не ограничиваем — её задаёт палец
+    // трекпад/геймпад без разгона: стик или палец сам ведёт плавно,
+    // аппаратный разгон здесь — только запаздывание; мощность тоже не
+    // ограничиваем — её задаёт стик
     g_chAccelMs = 0;
     const int mix[4] = {
         g_mixL > 0 ? g_mixL : 0,  // левый вперёд
@@ -384,15 +391,15 @@ static void applyMotors()
   {
     // ход и повороты — с раздельной мощностью и раздельным разгоном
     // (поворот на месте обычно требует другой мощности, чем езда).
-    // Мощность действует в обоих видах управления (в трекпаде ею же
-    // ограничиваются крайние положения — страница шлёт уже умноженный
-    // микс, сюда доходят только клавиши). Разгон в режиме трекпада
-    // ведёт себя как позиция «отключено» у списков разгона — и для
-    // трекпада, и для клавиш: любое движение мгновенное. В режиме
-    // кнопок мощность и разгон работают как настроено.
+    // Мощность действует во всех видах управления (в трекпаде и геймпаде
+    // ею же ограничивается край стика — страница шлёт уже умноженный
+    // микс, сюда доходят только клавиши). Разгон в аналоговых режимах
+    // (трекпад/геймпад) ведёт себя как позиция «отключено» у списков
+    // разгона — и для стика, и для клавиш: любое движение мгновенное.
+    // В режиме кнопок мощность и разгон работают как настроено.
     bool turn = (g_motorCmd == 'l' || g_motorCmd == 'r');
     int pct = turn ? g_motorTurnSpeed : g_motorSpeed;
-    g_chAccelMs = (g_ctrlMode == 1) ? 0 : (turn ? g_turnAccelMs : g_accelMs);
+    g_chAccelMs = (g_ctrlMode != 0) ? 0 : (turn ? g_turnAccelMs : g_accelMs);
     uint32_t duty = dutyFromPct(pct);
     char c = g_motorCmd;
     const bool active[4] = {
@@ -511,12 +518,14 @@ static void motorMix(int l, int r)
 // что после восстановления из NVS браузер всё покажет сам.
 static Preferences s_prefs;
 
-// Мощности у каждого вида управления СВОИ: кнопки — speed/tspeed, трекпад —
-// pspeed/ptspeed; в g_motorSpeed/g_motorTurnSpeed всегда лежит пара активного
-// вида (по g_ctrlMode). Заполняется при старте и при смене вида управления.
+// Мощности у кнопочного и аналоговых видов управления разные: кнопки —
+// speed/tspeed, трекпад и геймпад — общая пара pspeed/ptspeed (у обоих ею
+// ограничивается край круга/стика); в g_motorSpeed/g_motorTurnSpeed всегда
+// лежит пара активного вида (по g_ctrlMode). Заполняется при старте и при
+// смене вида управления.
 static void loadPowers()
 {
-  const bool pad = (g_ctrlMode == 1);
+  const bool pad = (g_ctrlMode != 0);
   int sp = (int)s_prefs.getUChar(pad ? "pspeed" : "speed", 100);
   g_motorSpeed = (sp >= 1 && sp <= 100) ? sp : 100;
   sp = (int)s_prefs.getUChar(pad ? "ptspeed" : "tspeed", 100);
@@ -557,8 +566,9 @@ static void settingsLoad()
   a = (int)s_prefs.getUChar("start", 0); // точка страгивания, % ШИМ
   g_motorStartPct = (a >= 0 && a <= 90) ? a : 0;
 
-  g_ctrlMode = (s_prefs.getUChar("ctrl", 0) == 1) ? 1 : 0; // вид управления
-  loadPowers();                                            // мощности — пара активного вида (свои для кнопок/трекпада)
+  int cm = (int)s_prefs.getUChar("ctrl", 0); // вид управления: 0/1/2
+  g_ctrlMode = (cm == 1 || cm == 2) ? cm : 0;
+  loadPowers(); // мощности — пара активного вида (кнопки свои, аналоговые свои)
 }
 
 // ========================= СТРАНИЦА И СТРИМ ===============================
@@ -724,6 +734,13 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
           border: 1px solid var(--border-hi);
           transform: translate(-50%, -50%); pointer-events: none; }
   .track.live .knob { border-color: var(--green); }
+  /* Геймпад: тот же круг, но только индикатор — ручка ходит за левым
+     стиком геймпада, касания круг не ловит */
+  .track.ro { pointer-events: none; }
+  /* Строка состояния геймпада — под кругом: найден/не найден */
+  .gstat { font-size: 12px; color: var(--muted); margin: 8px 0 0;
+           max-width: 280px; }
+  .gstat.ok { color: var(--green); }
 </style>
 </head>
 <body>
@@ -735,6 +752,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <button data-dir="l">&#9664;<span class="k">A</span></button><button data-dir="b">&#9660;<span class="k">S</span></button><button data-dir="r">&#9654;<span class="k">D</span></button>
 </div>
 <div class="track" id="track" style="display:none"><div class="knob" id="knob"></div></div>
+<div class="gstat" id="gstat" style="display:none"></div>
 </div>
 <div class="panel">
 <div class="group">
@@ -777,6 +795,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <select id="ctrl">
   <option value="0">кнопки (крестовина)</option>
   <option value="1">трекпад (плавный)</option>
+  <option value="2">геймпад (Bluetooth)</option>
 </select>
 <div class="mgrid">
 <span class="lbl">вперёд/назад</span><span class="lbl">повороты</span>
@@ -961,6 +980,14 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     applyTop();
     if (trackRect)
       trackEnd(); // палец был на трекпаде — тоже отпустить (стоп)
+    if (gpadTimer)
+    {
+      gpadFocus = false;
+      gpadStop(); // стик мог быть отклонён — остановиться, как клавиши
+    }
+  });
+  window.addEventListener('focus', function () {
+    gpadFocus = true; // стик ещё отклонён — следующий опрос продолжит вести
   });
   window.addEventListener('pagehide', function () {
     fetch('/set?motor=s', {keepalive: true});
@@ -1040,17 +1067,19 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   var trackRect = null; // геометрия касания; не null — палец на трекпаде
   var trackVec = {x: 0, y: 0};
   var trackTimer = null;
-  var mixSent = '';
-  function trackMix()
+  var mixSent = ''; // последний отправленный микс (одинаковый не шлём)
+  // Микс из вектора -1..1 (вертикаль — ход, горизонталь — поворот):
+  // предел хода/поворота — из списков мощности (в аналоговых видах они
+  // активны и ограничивают край круга/стика); .value — строка, умножение
+  // само приводит к числу. Общий для трекпада и геймпада.
+  function mixFromVec(x, y)
   {
-    // предел хода/поворота — из списков мощности (в режиме трекпада они
-    // активны и ограничивают край круга); .value — строка, умножение
-    // само приводит к числу
-    var fwd = Math.round(-trackVec.y * speedSel.value); // ход, %
-    var trn = Math.round(trackVec.x * turnSel.value);   // поворот, %
+    var fwd = Math.round(-y * speedSel.value); // ход, %
+    var trn = Math.round(x * turnSel.value);   // поворот, %
     function cl(v) { return v > 100 ? 100 : (v < -100 ? -100 : v); }
     return cl(fwd + trn) + ',' + cl(fwd - trn); // левая, правая гусеница
   }
+  function trackMix() { return mixFromVec(trackVec.x, trackVec.y); }
   function trackSend(force)
   {
     var m = trackMix();
@@ -1101,22 +1130,116 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   trackEl.addEventListener('pointerup', trackEnd);
   trackEl.addEventListener('pointercancel', trackEnd);
   trackEl.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
-  var accelSaved = null; // разгоны до входа в режим трекпада (вернуть обратно)
+  // Геймпад — третий вид управления. Bluetooth-геймпад подключается к
+  // САМОМУ устройству с браузером (телефону/компьютеру), робот про него
+  // ничего не знает: страница опрашивает его через Gamepad API каждые
+  // 50 мс, левый стик задаёт тот же вектор, что палец на трекпаде (те же
+  // mix= и пределы мощности), а круг трекпада становится индикатором —
+  // ручка ходит за стиком, касания круг больше не ловит. Браузер отдаёт
+  // геймпад только после нажатия любой кнопки на нём. Нюанс Chrome и
+  // Firefox: Gamepad API доступен лишь HTTPS-страницам, по обычному HTTP
+  // геймпад виден не будет — строка состояния подсказывает обходной путь.
+  var gstatEl = document.getElementById('gstat');
+  var gpadTimer = null; // опрос стика; не null — режим геймпада активен
+  var gpadLastMs = 0;   // когда шла последняя команда (повтор — 500 мс)
+  var gpadFocus = true; // окно в фокусе; blur — стоп (как у клавиш)
+  function gpadStop() // остановиться, если что-то отправляли
+  {
+    if (mixSent !== '0,0')
+    {
+      mixSent = '0,0';
+      fetch('/set?mix=0,0');
+    }
+  }
+  function gpadPoll()
+  {
+    if (!gpadFocus)
+      return; // окно в фоне — команды не шлём (стоп уже отправлен в blur)
+    var gp = null;
+    var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (var i = 0; i < pads.length; i++)
+      if (pads[i]) { gp = pads[i]; break; }
+    if (!gp)
+    {
+      gpadStop(); // вдруг геймпад отключили при отклонённом стике
+      knob.style.transform = 'translate(-50%,-50%)';
+      trackEl.className = 'track ro';
+      gstatEl.textContent = window.isSecureContext
+          ? 'геймпад не найден — нажмите любую кнопку на нём'
+          : 'браузер не даёт Gamepad API по HTTP (нужен HTTPS; в Chrome: '
+            + 'флаг unsafely-treat-insecure-origin-as-secure с адресом '
+            + 'робота, потом перезапуск)';
+      gstatEl.className = 'gstat';
+      return;
+    }
+    var name = gp.id || 'геймпад'; // без служебной части в скобках
+    var cut = name.indexOf(' (');
+    if (cut > 0)
+      name = name.slice(0, cut);
+    gstatEl.textContent = 'геймпад: ' + name;
+    gstatEl.className = 'gstat ok';
+    var x = gp.axes[0] || 0; // левый стик: горизонталь — поворот,
+    var y = gp.axes[1] || 0; // вертикаль — ход (вверх = отрицательное)
+    var len = Math.sqrt(x * x + y * y);
+    if (len > 1) { x /= len; y /= len; } // стик «зашкалил» — режем по краю
+    if (len <= 0.15) { x = 0; y = 0; }   // мёртвая зона (люфт стика)
+    else
+    {
+      // за мёртвой зоной шкала растягивается на весь ход стика: сразу
+      // после неё полный контроль, без «полумёртвого» края диапазона
+      var k = Math.min(1, (len - 0.15) / 0.85) / len;
+      x *= k;
+      y *= k;
+    }
+    var rad = trackEl.clientWidth / 2 - 32; // ручка-индикатор ходит за стиком
+    knob.style.transform = 'translate(-50%,-50%) translate(' +
+        (x * rad).toFixed(1) + 'px,' + (y * rad).toFixed(1) + 'px)';
+    trackEl.className = (x !== 0 || y !== 0) ? 'track ro live' : 'track ro';
+    var m = mixFromVec(x, y);
+    if (m !== mixSent || (m !== '0,0' && Date.now() - gpadLastMs >= 500))
+    {
+      // микс изменился — шлём сразу; удержание стика — повтор каждые
+      // 500 мс (та же страховка от таймаута команд на плате, что у кнопок)
+      mixSent = m;
+      gpadLastMs = Date.now();
+      fetch('/set?mix=' + m);
+    }
+  }
+  var accelSaved = null; // разгоны до входа в аналоговый вид (вернуть обратно)
   function setCtrl(mode)
   {
-    var track = (mode === '1');
-    padEl.style.display = track ? 'none' : 'grid';
-    trackEl.style.display = track ? 'block' : 'none';
-    // мощности действуют в обоих видах управления: кнопкам задают скважность,
-    // трекпаду — предел крайних положений (край круга = выбранная мощность),
-    // поля всегда активны. Разгон — настройка кнопочного пульта: в режиме
-    // трекпада строку гасим, поля делаем неактивными и показываем
+    var pad = (mode === '0');
+    var gpad = (mode === '2');
+    var stick = (mode !== '0'); // трекпад и геймпад — аналоговые виды
+    padEl.style.display = pad ? 'grid' : 'none';
+    trackEl.style.display = stick ? 'block' : 'none';
+    gstatEl.style.display = gpad ? 'block' : 'none';
+    if (gpad && !gpadTimer)
+    {
+      knob.style.transform = 'translate(-50%,-50%)';
+      trackEl.className = 'track ro'; // круг дальше — только индикатор
+      gpadFocus = true;
+      gpadTimer = setInterval(gpadPoll, 50);
+      gpadPoll();
+    }
+    else if (!gpad && gpadTimer)
+    {
+      clearInterval(gpadTimer);
+      gpadTimer = null;
+      gpadStop(); // ушли с геймпада при отклонённом стике — остановиться
+      knob.style.transform = 'translate(-50%,-50%)';
+      trackEl.className = 'track';
+    }
+    // мощности действуют во всех видах управления: кнопкам задают
+    // скважность, трекпаду и геймпаду — предел края круга/стика, поля
+    // всегда активны. Разгон — настройка кнопочного пульта: в аналоговых
+    // видах строку гасим, поля делаем неактивными и показываем
     // «отключено» — в прошивке так же (любое движение мгновенное и для
-    // трекпада, и для клавиш). Сохранённые разгоны возвращаем в режиме
+    // стика, и для клавиш). Сохранённые разгоны возвращаем в режиме
     // кнопок (на плату ничего не пишем).
-    arowEl.className = track ? 'arow off' : 'arow';
-    accelSel.disabled = tAccelSel.disabled = track;
-    if (track)
+    arowEl.className = stick ? 'arow off' : 'arow';
+    accelSel.disabled = tAccelSel.disabled = stick;
+    if (stick)
     {
       if (!accelSaved)
         accelSaved = [accelSel.value, tAccelSel.value];
@@ -1129,7 +1252,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       tAccelSel.value = accelSaved[1];
       accelSaved = null;
     }
-    if (!track && trackRect)
+    if (mode !== '1' && trackRect)
       trackEnd(); // ушли с трекпада во время движения — остановиться
   }
   ctrlSel.value = '@P@';
@@ -1139,8 +1262,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     fetch('/set?ctrl=' + ctrlSel.value)
         .then(function (r) { return r.text(); })
         .then(function (s) {
-          // мощности у каждого вида управления свои — плата присылает в
-          // ответе пару выбранного вида, подставляем её в поля
+          // мощности у кнопочного и аналоговых видов свои — плата
+          // присылает в ответе пару выбранного вида, подставляем её в поля
           // (нестандартное подтянется к ближайшему шагу — см.
           // applySelectValue)
           var p = s.split(',');
@@ -1302,12 +1425,12 @@ static esp_err_t set_handler(httpd_req_t *req)
     else if (httpd_query_key_value(query, "ctrl", val, sizeof(val)) == ESP_OK)
     {
       int m = atoi(val);
-      if (m == 0 || m == 1)
+      if (m == 0 || m == 1 || m == 2)
       {
         g_ctrlMode = m;
         s_prefs.putUChar("ctrl", (uint8_t)m);
         // активной стала пара мощностей выбранного вида — отдаём её
-        // странице (свои мощности для кнопок и трекпада)
+        // странице (кнопки — своя пара, трекпад с геймпадом — общая)
         loadPowers();
         char pbuf[10]; // "100,100"
         snprintf(pbuf, sizeof(pbuf), "%d,%d", (int)g_motorSpeed,
@@ -1323,7 +1446,7 @@ static esp_err_t set_handler(httpd_req_t *req)
       {
         g_motorSpeed = pct;
         applyMotors();
-        s_prefs.putUChar(g_ctrlMode == 1 ? "pspeed" : "speed", (uint8_t)pct);
+        s_prefs.putUChar(g_ctrlMode != 0 ? "pspeed" : "speed", (uint8_t)pct);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
@@ -1335,7 +1458,7 @@ static esp_err_t set_handler(httpd_req_t *req)
       {
         g_motorTurnSpeed = pct;
         applyMotors();
-        s_prefs.putUChar(g_ctrlMode == 1 ? "ptspeed" : "tspeed", (uint8_t)pct);
+        s_prefs.putUChar(g_ctrlMode != 0 ? "ptspeed" : "tspeed", (uint8_t)pct);
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
       }
