@@ -77,6 +77,40 @@
 static void wsSendColor(uint8_t r, uint8_t g, uint8_t b); // ниже по коду
 static void applyLight();                                 // ниже по коду
 
+// Индикация портала: светодиод МИГАЕТ синим (переключение каждые 500 мс) —
+// поднятый портал видно сразу и он отличим от просто синего света. Оба
+// подъёма портала (из setup и из loop) БЛОКИРУЮЩИЕ: пока портал открыт,
+// loop() стоит, мигать некому — переключения крутит отдельная задача
+// (создаётся в setup, до connectWiFi).
+static volatile bool s_portalBlink = false; // true, пока портал поднят
+
+static void portalBlinkTask(void *)
+{
+  bool on = false;
+  while (true)
+  {
+    if (s_portalBlink)
+    {
+      on = !on;
+      wsSendColor(0, 0, on ? 255 : 0);
+    }
+    else
+    {
+      on = false; // остановились — при следующем подъёме начать с «горит»
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+}
+
+// Останов мигания перед возвратом сохранённого света: задача могла быть
+// посреди отправки цвета в RMT — короткая пауза даёт ей закончить, чтобы
+// два потока не писали в светодиод одновременно.
+static void portalBlinkStop()
+{
+  s_portalBlink = false;
+  delay(20);
+}
+
 // Общие настройки WiFiManager для обоих подъёмов портала: при старте
 // (autoConnect из connectWiFi) и по пропаданию сети (startConfigPortal
 // из loop). Таймауты: попытка подключения — WIFI_CONNECT_TIMEOUT_MS,
@@ -87,7 +121,7 @@ static void wmConfigure(WiFiManager &wm)
   wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
   wm.setBreakAfterConfig(true); // неудачные новые данные — снова в цикл попыток
   wm.setAPCallback([](WiFiManager *)
-                   { wsSendColor(0, 0, 255); }); // портал — синий
+                   { s_portalBlink = true; }); // портал — мигать синим
 }
 
 // Сворачивает УСПЕШНО завершившийся портал WiFiManager: освобождает порт 80,
@@ -127,9 +161,10 @@ static void connectWiFi()
       ESP.restart(); // таймаут портала — перезапуск и новая попытка
     }
     wmClosePortal(wm); // сеть выбрали — освободить порт 80 под наши серверы
+    portalBlinkStop();
   }
   // Подключились: портал больше не активен — возвращаем сохранённый свет
-  // (иначе синий индикатор портала остался бы гореть до ручного вкл/выкл).
+  // (иначе мигающий индикатор портала остался бы до ручного вкл/выкл).
   applyLight();
 }
 
@@ -1711,6 +1746,9 @@ void setup()
     return; // без камеры сервер не поднимаем
   }
 
+  // мигание портала (см. s_portalBlink): задача должна жить до connectWiFi
+  xTaskCreate(portalBlinkTask, "portalBlink", 2048, NULL, 1, NULL);
+
   connectWiFi();
 
   if (MDNS.begin(HOSTNAME))
@@ -1789,9 +1827,10 @@ void loop()
       ESP.restart(); // таймаут портала — перезапуск и новая попытка
     }
     // Выбрали сеть: сворачиваем портал (библиотека сама порт 80 не
-    // освобождает), возвращаем свет (гасим синий индикатор портала)
+    // освобождает), останавливаем мигание, возвращаем сохранённый свет
     // и серверы — работаем дальше без перезагрузки.
     wmClosePortal(wm);
+    portalBlinkStop();
     applyLight();
     startWebServer();
   }
