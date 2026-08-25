@@ -130,13 +130,23 @@ avahi-resolve -n wificambot.local
 один раз открыть `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
 вписать адрес робота и перезапустить браузер; в Firefox обходного флага
 нет — либо открыть страницу в Chromium, либо пробросить робота на localhost
-(его браузеры считают безопасным контекстом):
+(его Firefox считает безопасным контекстом). Для этого в репозитории есть
+`tunnel.sh` (нужен socat):
 
 ```bash
-socat TCP-LISTEN:8080,fork,reuseaddr TCP:wificambot.local:80 &
-socat TCP-LISTEN:81,fork,reuseaddr TCP:wificambot.local:81 &
-# дальше открывать http://localhost:8080 — стрим страница сама возьмёт
-# с localhost:81 (второй проброс); socat должны работать, пока ездите
+./tunnel.sh                 # робот ищется как wificambot.local
+./tunnel.sh 192.168.1.42    # или по IP; --no-open — без запуска браузера
+```
+
+Скрипт поднимает пробросы 127.0.0.1:8080 -> робот:80 и 127.0.0.1:81 ->
+робот:81, сам открывает http://localhost:8080 (стрим страница возьмёт с
+localhost:81) и работает до Ctrl+C; пока ездите, он должен работать —
+задержка чуть вырастет, трафик идёт транзитом через этот компьютер.
+Локальный порт 81 привилегированный, чтобы скрипт не просил sudo, один
+раз дайте socat право его слушать:
+
+```bash
+sudo setcap cap_net_bind_service=+ep "$(readlink -f "$(command -v socat)")"
 ```
 
 Рядом с качеством — список «Поворот кадра» (0/90/180/270°):
