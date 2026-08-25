@@ -913,6 +913,31 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   var keepalive = null;
   var padBtns = document.querySelectorAll('#pad button[data-dir]');
   function sendMotor(d) { fetch('/set?motor=' + d); }
+  // Стоп шлём не одним пакетом, а ещё дважды с интервалом: WiFi иногда
+  // проваливается на секунды, и за это время к плате могут ДОГОНЯТЬ
+  // застрявшие в очереди команды движения (таймаут команд они же и
+  // сбрасывают) — робот «ехал после отпускания». Повторный стоп приедет
+  // после очереди и остановит; лишние стопы плате безвредны. Началось
+  // новое движение (кнопка/палец/стик) — повторы прекращаются.
+  var stopRepeatTimer = null;
+  function stopRepeat()
+  {
+    if (stopRepeatTimer)
+      clearInterval(stopRepeatTimer);
+    var n = 0;
+    stopRepeatTimer = setInterval(function () {
+      var moving = trackRect || motorDir !== 's' ||
+                   (gpadTimer !== null && mixSent !== '0,0');
+      if (moving || ++n > 2)
+      {
+        clearInterval(stopRepeatTimer);
+        stopRepeatTimer = null;
+        return;
+      }
+      fetch('/set?mix=0,0'); // оба варианта стопа — остановятся и кнопки,
+      fetch('/set?motor=s'); // и трекпад с геймпадом
+    }, 400);
+  }
   function motorUI()
   {
     for (var i = 0; i < padBtns.length; i++)
@@ -930,6 +955,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     keepalive = null;
     if (d !== 's')
       keepalive = setInterval(function () { sendMotor(motorDir); }, 500);
+    else
+      stopRepeat(); // отпускание — продублировать стоп (см. stopRepeat)
     motorUI();
   }
   function motorPress(d)
@@ -984,6 +1011,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     {
       gpadFocus = false;
       gpadStop(); // стик мог быть отклонён — остановиться, как клавиши
+      stopRepeat();
     }
   });
   window.addEventListener('focus', function () {
@@ -1112,6 +1140,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     knob.style.transform = 'translate(-50%,-50%)';
     trackEl.className = 'track';
     trackSend(true); // отпустили — микс 0,0, это стоп
+    stopRepeat();    // и продублируем его — см. stopRepeat
   }
   trackEl.addEventListener('pointerdown', function (ev) {
     ev.preventDefault();
@@ -1208,6 +1237,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       mixSent = m;
       gpadLastMs = Date.now();
       fetch('/set?mix=' + m);
+      if (m === '0,0')
+        stopRepeat(); // стик вернулся в центр — продублировать стоп
     }
   }
   var accelSaved = null; // разгоны до входа в аналоговый вид (вернуть обратно)
@@ -1232,6 +1263,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       clearInterval(gpadTimer);
       gpadTimer = null;
       gpadStop(); // ушли с геймпада при отклонённом стике — остановиться
+      stopRepeat();
       knob.style.transform = 'translate(-50%,-50%)';
       trackEl.className = 'track';
     }
