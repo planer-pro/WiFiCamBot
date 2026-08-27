@@ -9,10 +9,16 @@ import 'app_settings.dart';
 /// Ошибки связи не бросает наружу — команды движения слать «в никуда» безопасно:
 /// сторожевой таймер платы сам остановит моторы через 1.5 с.
 class RobotClient {
-  RobotClient(this._settingsOf);
+  /// [timeout] — на соединение и ответ. Командам движения хватит короткого
+  /// (страховка — сторожевой таймер платы), чтению /status через медленные
+  /// туннели (облако Keenetic, замеры до 7 с) нужен запас.
+  RobotClient(this._settingsOf, {Duration timeout = const Duration(seconds: 3)})
+      : _timeout = timeout;
 
   /// Функция отдаёт актуальный адрес робота (может поменяться в настройках).
   final AppSettings Function() _settingsOf;
+
+  final Duration _timeout;
 
   final HttpClient _http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 3)
@@ -51,7 +57,7 @@ class RobotClient {
   Future<void> _doSet(String name, String value) async {
     try {
       final req = await _http.getUrl(_uri('/set', {name: value}));
-      final res = await req.close().timeout(const Duration(seconds: 3));
+      final res = await req.close().timeout(_timeout);
       await res.drain<void>().catchError((_) {});
     } catch (_) {
       // ошибка команды не страшна: сторожевой таймер платы сам остановит
@@ -75,7 +81,7 @@ class RobotClient {
   Future<bool> setParam(String name, String value) async {
     try {
       final req = await _http.getUrl(_uri('/set', {name: value}));
-      final res = await req.close().timeout(const Duration(seconds: 3));
+      final res = await req.close().timeout(_timeout);
       await res.drain<void>().catchError((_) {});
       return res.statusCode == 200;
     } catch (_) {
@@ -88,7 +94,7 @@ class RobotClient {
   Future<List<int>?> setCtrl(int mode) async {
     try {
       final req = await _http.getUrl(_uri('/set', {'ctrl': '$mode'}));
-      final res = await req.close().timeout(const Duration(seconds: 3));
+      final res = await req.close().timeout(_timeout);
       final body = await utf8.decoder.bind(res).join();
       if (res.statusCode != 200) {
         return null;
@@ -107,7 +113,7 @@ class RobotClient {
   Future<RobotSettings?> fetchStatus() async {
     try {
       final req = await _http.getUrl(_uri('/status'));
-      final res = await req.close().timeout(const Duration(seconds: 3));
+      final res = await req.close().timeout(_timeout);
       if (res.statusCode != 200) {
         return null;
       }

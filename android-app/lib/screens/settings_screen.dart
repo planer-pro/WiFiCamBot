@@ -45,7 +45,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _url = TextEditingController(text: widget.appSettings.baseUrl);
     _port = TextEditingController(text: '${widget.appSettings.streamPort}');
     _streamUrl = TextEditingController(text: widget.appSettings.streamUrl);
-    _robot = RobotClient(() => widget.appSettings);
+    // адрес читается из поля на момент запроса: если пользователь поправил
+    // его прямо здесь, «Повторить» стучится уже по новому адресу; таймаут
+    // с запасом — облако Keenetic отвечает на /status до нескольких секунд
+    _robot = RobotClient(() => AppSettings(baseUrl: _url.text.trim()),
+        timeout: const Duration(seconds: 8));
     _rs = widget.robotSettings;
     if (_rs == null) {
       _loadStatus();
@@ -148,10 +152,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _testConnection() async {
     setState(() => _connTest = 'Проверяю…');
     final int port = int.tryParse(_port.text.trim()) ?? 81;
-    final RobotClient probe = RobotClient(() => AppSettings(
-          baseUrl: _url.text.trim(),
-          streamPort: port,
-        ));
+    final RobotClient probe = RobotClient(
+        () => AppSettings(baseUrl: _url.text.trim(), streamPort: port),
+        timeout: const Duration(seconds: 8));
     final RobotSettings? rs = await probe.fetchStatus();
     probe.dispose();
     if (!mounted) {
