@@ -416,7 +416,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               children: [
                 Icon(icon, color: color, size: 20),
                 const SizedBox(width: 8),
-                Text(label, style: TextStyle(color: color)),
+                // статус сжимается с многоточием — на узком экране строка
+                // не переполняется и шестерёнка не улетает за край
+                Flexible(
+                  child: Text(
+                    label,
+                    style: TextStyle(color: color),
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    maxLines: 1,
+                  ),
+                ),
                 _connMenu(),
                 const Spacer(),
                 IconButton(
