@@ -31,10 +31,7 @@ class DpadWidget extends StatelessWidget {
           decoration: BoxDecoration(
             color: on ? cs.primary : null,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: on ? cs.primary : cs.outline,
-              width: 2,
-            ),
+            border: Border.all(color: on ? cs.primary : cs.outline, width: 2),
           ),
           child: Center(
             child: Icon(icon, size: 34, color: on ? cs.onPrimary : null),
@@ -59,18 +56,22 @@ class DpadWidget extends StatelessWidget {
       child: Column(
         children: [
           Expanded(
-            child: Row(children: [
-              _gap(),
-              _cell(context, MotorDir.fwd, Icons.arrow_upward),
-              _gap(),
-            ]),
+            child: Row(
+              children: [
+                _gap(),
+                _cell(context, MotorDir.fwd, Icons.arrow_upward),
+                _gap(),
+              ],
+            ),
           ),
           Expanded(
-            child: Row(children: [
-              _cell(context, MotorDir.left, Icons.arrow_back),
-              _cell(context, MotorDir.back, Icons.arrow_downward),
-              _cell(context, MotorDir.right, Icons.arrow_forward),
-            ]),
+            child: Row(
+              children: [
+                _cell(context, MotorDir.left, Icons.arrow_back),
+                _cell(context, MotorDir.back, Icons.arrow_downward),
+                _cell(context, MotorDir.right, Icons.arrow_forward),
+              ],
+            ),
           ),
         ],
       ),

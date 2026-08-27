@@ -71,8 +71,7 @@ class MjpegStream extends ChangeNotifier {
     }
     state = MjpegState.connecting;
     notifyListeners();
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 4);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
     _http = client;
     try {
       final req = await client.getUrl(urlOf());
@@ -80,11 +79,10 @@ class MjpegStream extends ChangeNotifier {
       if (!_running || generation != _generation) {
         return;
       }
-      final String boundary = _boundaryOf(
-              res.headers.value(HttpHeaders.contentTypeHeader)) ??
+      final String boundary =
+          _boundaryOf(res.headers.value(HttpHeaders.contentTypeHeader)) ??
           '123456789000000000000987654321';
-      await for (final Uint8List frame
-          in _frames(res, boundary, generation)) {
+      await for (final Uint8List frame in _frames(res, boundary, generation)) {
         if (!_running || generation != _generation) {
           return;
         }
@@ -105,14 +103,16 @@ class MjpegStream extends ChangeNotifier {
     state = MjpegState.reconnecting;
     notifyListeners();
     _reconnect?.cancel();
-    _reconnect =
-        Timer(const Duration(seconds: 1), () => _connect(generation));
+    _reconnect = Timer(const Duration(seconds: 1), () => _connect(generation));
   }
 
   /// Разбор multipart: маркер «--BOUNDARY», заголовки части до \r\n\r\n,
   /// затем Content-Length байт JPEG. Конечного маркера сервер не шлёт.
   Stream<Uint8List> _frames(
-      HttpClientResponse res, String boundary, int generation) async* {
+    HttpClientResponse res,
+    String boundary,
+    int generation,
+  ) async* {
     final List<int> marker = utf8.encode('--$boundary');
     final List<int> headerEnd = [13, 10, 13, 10]; // \r\n\r\n
     List<int> bytes = [];
@@ -160,8 +160,9 @@ class MjpegStream extends ChangeNotifier {
           bytes.addAll(it.current);
           hend = find(pos, headerEnd);
         }
-        final String headers =
-            String.fromCharCodes(bytes.sublist(pos, hend)).toLowerCase();
+        final String headers = String.fromCharCodes(
+          bytes.sublist(pos, hend),
+        ).toLowerCase();
         final RegExp lenRe = RegExp(r'content-length:\s*(\d+)');
         final RegExpMatch? m = lenRe.firstMatch(headers);
         if (m == null) {
@@ -176,7 +177,9 @@ class MjpegStream extends ChangeNotifier {
           }
           bytes.addAll(it.current);
         }
-        yield Uint8List.fromList(bytes.sublist(bodyStart, bodyStart + frameLen));
+        yield Uint8List.fromList(
+          bytes.sublist(bodyStart, bodyStart + frameLen),
+        );
         // буфер: отрезаем обработанное
         bytes = bytes.sublist(bodyStart + frameLen);
         if (!_running || generation != _generation) {
@@ -194,8 +197,10 @@ class MjpegStream extends ChangeNotifier {
     }
     _decoding = true;
     try {
-      final ui.Codec codec =
-          await ui.instantiateImageCodec(data, targetWidth: targetWidth);
+      final ui.Codec codec = await ui.instantiateImageCodec(
+        data,
+        targetWidth: targetWidth,
+      );
       final ui.FrameInfo fi = await codec.getNextFrame();
       codec.dispose();
       final ui.Image? old = image;
@@ -213,8 +218,9 @@ class MjpegStream extends ChangeNotifier {
     if (contentType == null) {
       return null;
     }
-    final RegExpMatch? m =
-        RegExp('boundary=(\\S+)').firstMatch(contentType.toLowerCase());
+    final RegExpMatch? m = RegExp(
+      'boundary=(\\S+)',
+    ).firstMatch(contentType.toLowerCase());
     return m?.group(1);
   }
 

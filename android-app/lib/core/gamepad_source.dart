@@ -7,13 +7,10 @@ import 'package:flutter/services.dart';
 /// Реализация канала — MainActivity.kt ('wificambot/gamepad').
 class GamepadEvent {
   const GamepadEvent.axes(this.x, this.y)
-      : devicesChanged = false,
-        names = const [];
+    : devicesChanged = false,
+      names = const [];
 
-  const GamepadEvent.devices(this.names)
-      : devicesChanged = true,
-        x = 0,
-        y = 0;
+  const GamepadEvent.devices(this.names) : devicesChanged = true, x = 0, y = 0;
 
   /// true — изменился список подключённых геймпадов (names).
   final bool devicesChanged;
@@ -34,9 +31,12 @@ class GamepadSource {
         final Map<dynamic, dynamic> m = raw as Map<dynamic, dynamic>;
         if (m['type'] == 'devices') {
           return GamepadEvent.devices(
-              (m['names'] as List<dynamic>).cast<String>());
+            (m['names'] as List<dynamic>).cast<String>(),
+          );
         }
         return GamepadEvent.axes(
-            (m['x'] as num).toDouble(), (m['y'] as num).toDouble());
+          (m['x'] as num).toDouble(),
+          (m['y'] as num).toDouble(),
+        );
       });
 }

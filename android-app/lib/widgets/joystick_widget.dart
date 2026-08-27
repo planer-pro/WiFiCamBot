@@ -29,9 +29,15 @@ class JoystickPainter extends CustomPainter {
       ..strokeWidth = 1
       ..color = const Color(0x33FFFFFF);
     canvas.drawLine(
-        c - Offset(rad * 0.85, 0), c + Offset(rad * 0.85, 0), cross);
+      c - Offset(rad * 0.85, 0),
+      c + Offset(rad * 0.85, 0),
+      cross,
+    );
     canvas.drawLine(
-        c - Offset(0, rad * 0.85), c + Offset(0, rad * 0.85), cross);
+      c - Offset(0, rad * 0.85),
+      c + Offset(0, rad * 0.85),
+      cross,
+    );
     final Offset knob = c + vec * (rad * 0.82);
     final Paint knobPaint = Paint()
       ..style = PaintingStyle.fill

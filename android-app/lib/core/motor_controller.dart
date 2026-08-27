@@ -7,11 +7,11 @@ import 'robot_client.dart';
 enum MotorDir { fwd, back, left, right }
 
 String _dirCmd(MotorDir d) => switch (d) {
-      MotorDir.fwd => 'f',
-      MotorDir.back => 'b',
-      MotorDir.left => 'l',
-      MotorDir.right => 'r',
-    };
+  MotorDir.fwd => 'f',
+  MotorDir.back => 'b',
+  MotorDir.left => 'l',
+  MotorDir.right => 'r',
+};
 
 /// Логика движения — порт веб-версии 1:1:
 ///  - активная команда повторяется каждые 500 мс, пока удерживается

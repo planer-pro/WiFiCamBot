@@ -13,7 +13,7 @@ class RobotClient {
   /// (страховка — сторожевой таймер платы), чтению /status через медленные
   /// туннели (облако Keenetic, замеры до 7 с) нужен запас.
   RobotClient(this._settingsOf, {Duration timeout = const Duration(seconds: 3)})
-      : _timeout = timeout;
+    : _timeout = timeout;
 
   /// Функция отдаёт актуальный адрес робота (может поменяться в настройках).
   final AppSettings Function() _settingsOf;
@@ -69,8 +69,9 @@ class RobotClient {
     if (query != null) {
       // строку запроса собираем сами: прошивка ждёт буквальную запятую
       // в mix=L,R, а queryParameters закодировала бы её в %2C
-      final String q =
-          query.entries.map((e) => '${e.key}=${e.value}').join('&');
+      final String q = query.entries
+          .map((e) => '${e.key}=${e.value}')
+          .join('&');
       u = u.replace(query: q);
     }
     return u;
@@ -118,8 +119,7 @@ class RobotClient {
         return null;
       }
       final body = await utf8.decoder.bind(res).join();
-      return RobotSettings.fromJson(
-          jsonDecode(body) as Map<String, dynamic>);
+      return RobotSettings.fromJson(jsonDecode(body) as Map<String, dynamic>);
     } catch (_) {
       return null;
     }

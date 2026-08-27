@@ -4,10 +4,14 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Локальные настройки приложения: адрес робота и пароль входа.
+/// Профиль подключения: адрес робота + параметры стрима.
 /// (Настройки самого робота — в models/robot_settings.dart.)
-class AppSettings {
-  const AppSettings({this.baseUrl = '', this.streamPort = 81, this.streamUrl = ''});
+class ConnProfile {
+  const ConnProfile({
+    this.baseUrl = '',
+    this.streamPort = 81,
+    this.streamUrl = '',
+  });
 
   /// Базовый адрес робота: «http://192.168.1.137» или «192.168.1.137»
   /// (без схемы считается http). Для доступа извне локальной сети —
@@ -48,12 +52,53 @@ class AppSettings {
     return u.path.isEmpty ? u.replace(path: '/stream') : u;
   }
 
-  AppSettings copyWith({String? baseUrl, int? streamPort, String? streamUrl}) =>
-      AppSettings(
+  ConnProfile copyWith({String? baseUrl, int? streamPort, String? streamUrl}) =>
+      ConnProfile(
         baseUrl: baseUrl ?? this.baseUrl,
         streamPort: streamPort ?? this.streamPort,
         streamUrl: streamUrl ?? this.streamUrl,
       );
+}
+
+/// Какое подключение активно: локальная сеть или интернет.
+enum ConnKind { local, inet }
+
+extension ConnKindX on ConnKind {
+  String get label => this == ConnKind.inet ? 'Интернет' : 'Локальное';
+}
+
+/// Локальные настройки приложения: два профиля подключения и пароль входа.
+class AppSettings {
+  const AppSettings({
+    this.local = const ConnProfile(),
+    this.inet = const ConnProfile(),
+    this.kind = ConnKind.local,
+  });
+
+  /// Профиль «Локальное»: дома, в сети робота.
+  final ConnProfile local;
+
+  /// Профиль «Интернет»: доступ извне (облако Keenetic, туннель).
+  final ConnProfile inet;
+
+  /// Активный профиль — по нему ходят команды и стрим.
+  final ConnKind kind;
+
+  ConnProfile get active => kind == ConnKind.inet ? inet : local;
+
+  bool get hasAddress => active.hasAddress;
+  Uri get baseUri => active.baseUri;
+  Uri get streamUri => active.streamUri;
+
+  AppSettings copyWith({
+    ConnProfile? local,
+    ConnProfile? inet,
+    ConnKind? kind,
+  }) => AppSettings(
+    local: local ?? this.local,
+    inet: inet ?? this.inet,
+    kind: kind ?? this.kind,
+  );
 }
 
 /// Хранение локальных настроек (SharedPreferences) и пароля входа.
@@ -62,6 +107,14 @@ class SettingsStore {
 
   static const String defaultPin = '1234';
 
+  static const String _kLocalUrl = 'local_base_url';
+  static const String _kLocalPort = 'local_stream_port';
+  static const String _kLocalStream = 'local_stream_url';
+  static const String _kInetUrl = 'inet_base_url';
+  static const String _kInetPort = 'inet_stream_port';
+  static const String _kInetStream = 'inet_stream_url';
+  static const String _kKind = 'conn_kind';
+  // одиночные ключи до появления двух профилей — для миграции
   static const String _kBaseUrl = 'base_url';
   static const String _kStreamPort = 'stream_port';
   static const String _kStreamUrl = 'stream_url';
@@ -70,16 +123,45 @@ class SettingsStore {
 
   final SharedPreferences _prefs;
 
-  AppSettings get settings => AppSettings(
-        baseUrl: _prefs.getString(_kBaseUrl) ?? '',
-        streamPort: _prefs.getInt(_kStreamPort) ?? 81,
-        streamUrl: _prefs.getString(_kStreamUrl) ?? '',
-      );
+  AppSettings get settings {
+    // миграция: раньше адрес был один — кладём его в оба профиля,
+    // дальше пользователь разведёт их сам
+    if (!_prefs.containsKey(_kLocalUrl) && _prefs.containsKey(_kBaseUrl)) {
+      final String url = _prefs.getString(_kBaseUrl) ?? '';
+      final int port = _prefs.getInt(_kStreamPort) ?? 81;
+      final String stream = _prefs.getString(_kStreamUrl) ?? '';
+      _prefs.setString(_kLocalUrl, url);
+      _prefs.setInt(_kLocalPort, port);
+      _prefs.setString(_kLocalStream, stream);
+      _prefs.setString(_kInetUrl, url);
+      _prefs.setInt(_kInetPort, port);
+      _prefs.setString(_kInetStream, stream);
+    }
+    return AppSettings(
+      local: ConnProfile(
+        baseUrl: _prefs.getString(_kLocalUrl) ?? '',
+        streamPort: _prefs.getInt(_kLocalPort) ?? 81,
+        streamUrl: _prefs.getString(_kLocalStream) ?? '',
+      ),
+      inet: ConnProfile(
+        baseUrl: _prefs.getString(_kInetUrl) ?? '',
+        streamPort: _prefs.getInt(_kInetPort) ?? 81,
+        streamUrl: _prefs.getString(_kInetStream) ?? '',
+      ),
+      kind: (_prefs.getString(_kKind) ?? 'local') == 'inet'
+          ? ConnKind.inet
+          : ConnKind.local,
+    );
+  }
 
   Future<void> saveSettings(AppSettings s) async {
-    await _prefs.setString(_kBaseUrl, s.baseUrl.trim());
-    await _prefs.setInt(_kStreamPort, s.streamPort);
-    await _prefs.setString(_kStreamUrl, s.streamUrl.trim());
+    await _prefs.setString(_kLocalUrl, s.local.baseUrl.trim());
+    await _prefs.setInt(_kLocalPort, s.local.streamPort);
+    await _prefs.setString(_kLocalStream, s.local.streamUrl.trim());
+    await _prefs.setString(_kInetUrl, s.inet.baseUrl.trim());
+    await _prefs.setInt(_kInetPort, s.inet.streamPort);
+    await _prefs.setString(_kInetStream, s.inet.streamUrl.trim());
+    await _prefs.setString(_kKind, s.kind.name);
   }
 
   /// Пользователь менял пароль (иначе действует стандартный 1234).
@@ -104,9 +186,10 @@ class SettingsStore {
       sha256.convert(utf8.encode('$salt$pin')).toString();
 
   String _randomHex(int bytes) {
-    final rnd = Random.secure();
-    return List<int>.generate(bytes, (_) => rnd.nextInt(256))
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
+    final Random rnd = Random.secure();
+    return List<int>.generate(
+      bytes,
+      (_) => rnd.nextInt(256),
+    ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 }

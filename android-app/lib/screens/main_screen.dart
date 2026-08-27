@@ -183,9 +183,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       return;
     }
     final bool urlChanged =
-        res.app.baseUrl != _app.baseUrl ||
-        res.app.streamPort != _app.streamPort ||
-        res.app.streamUrl != _app.streamUrl;
+        res.app.baseUri != _app.baseUri || res.app.streamUri != _app.streamUri;
     final bool qualityChanged =
         res.rs != null && _rs != null && res.rs!.quality != _rs!.quality;
     final int prevCtrl = _rs?.ctrl ?? 0;
@@ -203,6 +201,62 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     unawaited(_refreshStatus());
     _syncGamepad(prevMode: prevCtrl);
+  }
+
+  // ---- быстрое переключение профиля подключения (локальное/интернет) ----
+
+  /// Меняет активный профиль: стоп моторов, сохранение, перезапуск стрима
+  /// и опрос состояния по новому адресу.
+  Future<void> _switchConn(ConnKind k) async {
+    if (_app.kind == k) {
+      return;
+    }
+    _motor.stopAll();
+    setState(() => _app = _app.copyWith(kind: k));
+    unawaited(widget.store.saveSettings(_app));
+    if (_app.hasAddress) {
+      _stream.restart();
+    } else {
+      _stream.stop();
+    }
+    _refreshStatus();
+  }
+
+  Widget _connMenu() {
+    final ThemeData th = Theme.of(context);
+    PopupMenuItem<ConnKind> item(ConnKind k, IconData icon) =>
+        PopupMenuItem<ConnKind>(
+          value: k,
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: th.colorScheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Text(k.label),
+            ],
+          ),
+        );
+    return PopupMenuButton<ConnKind>(
+      tooltip: 'Подключение',
+      initialValue: _app.kind,
+      onSelected: _switchConn,
+      itemBuilder: (_) => [
+        item(ConnKind.local, Icons.router_outlined),
+        item(ConnKind.inet, Icons.cloud_outlined),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          children: [
+            Text(_app.kind.label, style: th.textTheme.bodySmall),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 18,
+              color: th.colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ---- быстрый выбор вида управления (меню в верхней панели) ----
@@ -343,6 +397,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             Icon(icon, color: color, size: 20),
             const SizedBox(width: 8),
             Text(label, style: TextStyle(color: color)),
+            _connMenu(),
             const Spacer(),
             IconButton(
               tooltip: 'Свет',

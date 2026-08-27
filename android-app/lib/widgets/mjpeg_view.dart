@@ -22,34 +22,40 @@ class _MjpegViewState extends State<MjpegView> {
   @override
   Widget build(BuildContext context) {
     final bool vertical = widget.rot % 180 != 0;
-    return LayoutBuilder(builder: (context, constraints) {
-      // декодируем кадр под фактический размер виджета (экономия памяти)
-      final double dpr = MediaQuery.devicePixelRatioOf(context);
-      final double biggest = math.max(constraints.maxWidth,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // декодируем кадр под фактический размер виджета (экономия памяти)
+        final double dpr = MediaQuery.devicePixelRatioOf(context);
+        final double biggest = math.max(
+          constraints.maxWidth,
           constraints.maxHeight == double.infinity
               ? constraints.maxWidth
-              : constraints.maxHeight);
-      final int tw = (biggest * dpr).clamp(320, 1920).round();
-      if (widget.stream.targetWidth != tw) {
-        widget.stream.targetWidth = tw;
-      }
-      return AspectRatio(
-        aspectRatio: vertical ? 3 / 4 : 4 / 3,
-        child: ClipRect(
-          child: ColoredBox(
-            color: Colors.black,
-            child: ListenableBuilder(
-              listenable: widget.stream,
-              builder: (context, _) => CustomPaint(
-                foregroundPainter:
-                    FramePainter(widget.stream.image, widget.rot),
-                child: const SizedBox.expand(),
+              : constraints.maxHeight,
+        );
+        final int tw = (biggest * dpr).clamp(320, 1920).round();
+        if (widget.stream.targetWidth != tw) {
+          widget.stream.targetWidth = tw;
+        }
+        return AspectRatio(
+          aspectRatio: vertical ? 3 / 4 : 4 / 3,
+          child: ClipRect(
+            child: ColoredBox(
+              color: Colors.black,
+              child: ListenableBuilder(
+                listenable: widget.stream,
+                builder: (context, _) => CustomPaint(
+                  foregroundPainter: FramePainter(
+                    widget.stream.image,
+                    widget.rot,
+                  ),
+                  child: const SizedBox.expand(),
+                ),
               ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 }
 
