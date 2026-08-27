@@ -131,7 +131,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     final ({double x, double y}) v = gpadDeadzone(ev.x, ev.y);
     _motor.updateVector(
-        v.x, v.y, _rs?.activeSpeed ?? 100, _rs?.activeTurn ?? 100);
+      v.x,
+      v.y,
+      _rs?.activeSpeed ?? 100,
+      _rs?.activeTurn ?? 100,
+    );
     final Offset vec = Offset(v.x, v.y);
     if (vec != _gpadVec && mounted) {
       setState(() => _gpadVec = vec);
@@ -163,18 +167,23 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Future<void> _openSettings() async {
     _motor.stopAll();
-    final ({AppSettings app, RobotSettings? rs})? res = await Navigator.of(
-            context)
-        .push<({AppSettings app, RobotSettings? rs})>(MaterialPageRoute(
+    final ({AppSettings app, RobotSettings? rs})? res =
+        await Navigator.of(
+          context,
+        ).push<({AppSettings app, RobotSettings? rs})>(
+          MaterialPageRoute(
             builder: (_) => SettingsScreen(
-                  store: widget.store,
-                  appSettings: _app,
-                  robotSettings: _rs,
-                )));
+              store: widget.store,
+              appSettings: _app,
+              robotSettings: _rs,
+            ),
+          ),
+        );
     if (!mounted || res == null) {
       return;
     }
-    final bool urlChanged = res.app.baseUrl != _app.baseUrl ||
+    final bool urlChanged =
+        res.app.baseUrl != _app.baseUrl ||
         res.app.streamPort != _app.streamPort ||
         res.app.streamUrl != _app.streamUrl;
     final bool qualityChanged =
@@ -196,6 +205,81 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _syncGamepad(prevMode: prevCtrl);
   }
 
+  // ---- быстрый выбор вида управления (меню в верхней панели) ----
+
+  /// Порт _changeCtrl экрана настроек: оптимистично + откат; в ответе плата
+  /// отдаёт пару мощностей выбранного вида — кладём её в свою пару.
+  Future<void> _changeCtrl(int mode) async {
+    final RobotSettings? rs = _rs;
+    if (rs == null || rs.ctrl == mode) {
+      return;
+    }
+    setState(() => _rs = rs.copyWith(ctrl: mode));
+    _syncGamepad(prevMode: rs.ctrl); // смена вида во время движения — стоп
+    final List<int>? pair = await _robot.setCtrl(mode);
+    if (!mounted) {
+      return;
+    }
+    if (pair == null) {
+      setState(() => _rs = rs);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Робот не принял вид управления')),
+      );
+      return;
+    }
+    setState(
+      () => _rs = _rs!.copyWith(
+        ctrl: mode,
+        speed: mode == 0 ? pair[0] : _rs!.speed,
+        tspeed: mode == 0 ? pair[1] : _rs!.tspeed,
+        pspeed: mode != 0 ? pair[0] : _rs!.pspeed,
+        ptspeed: mode != 0 ? pair[1] : _rs!.ptspeed,
+      ),
+    );
+  }
+
+  /// Быстрая кнопка света: переключает вкл/выкл (цвет остаётся прежним),
+  /// оптимистично + откат, если плата не подтвердила.
+  Future<void> _toggleLight() async {
+    final RobotSettings? rs = _rs;
+    if (rs == null) {
+      return;
+    }
+    final int next = rs.light == 0 ? 1 : 0;
+    setState(() => _rs = rs.copyWith(light: next));
+    if (!await _robot.setParam('light', '$next') && mounted) {
+      setState(() => _rs = rs);
+    }
+  }
+
+  Widget _ctrlMenu() {
+    final int mode = _rs?.ctrl ?? 0;
+    final ThemeData th = Theme.of(context);
+    return PopupMenuButton<int>(
+      tooltip: 'Вид управления',
+      initialValue: mode,
+      enabled: _rs != null,
+      onSelected: _changeCtrl,
+      itemBuilder: (_) => [
+        for (int i = 0; i < RobotSettings.ctrlLabels.length; i++)
+          PopupMenuItem(value: i, child: Text(RobotSettings.ctrlLabels[i])),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          children: [
+            Text(RobotSettings.ctrlLabels[mode], style: th.textTheme.bodySmall),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 18,
+              color: th.colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ---- построение ----
 
   @override
@@ -204,7 +288,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         MediaQuery.orientationOf(context) == Orientation.portrait;
     return Scaffold(
       body: SafeArea(
-        child: portrait ? Column(children: _rows(false)) : Row(children: _rows(true)),
+        child: portrait
+            ? Column(children: _rows(false))
+            : Row(children: _rows(true)),
       ),
     );
   }
@@ -214,10 +300,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _topBar(),
       Expanded(
         child: landscape
-            ? Row(children: [
-                Expanded(child: _videoArea()),
-                _controlPanel(constrainedSide: true),
-              ])
+            ? Row(
+                children: [
+                  Expanded(child: _videoArea()),
+                  _controlPanel(constrainedSide: true),
+                ],
+              )
             : _videoArea(),
       ),
       if (!landscape) _controlPanel(constrainedSide: false),
@@ -250,19 +338,31 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       height: 48,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Row(children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(width: 8),
-          Text(label, style: TextStyle(color: color)),
-          const Spacer(),
-          Text(RobotSettings.ctrlLabels[_rs?.ctrl ?? 0],
-              style: Theme.of(context).textTheme.bodySmall),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Настройки',
-            onPressed: _openSettings,
-          ),
-        ]),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 20),
+            const SizedBox(width: 8),
+            Text(label, style: TextStyle(color: color)),
+            const Spacer(),
+            IconButton(
+              tooltip: 'Свет',
+              onPressed: _rs == null ? null : _toggleLight,
+              icon: Icon(
+                (_rs?.light ?? 0) != 0
+                    ? Icons.lightbulb
+                    : Icons.lightbulb_outline,
+                size: 20,
+                color: (_rs?.light ?? 0) != 0 ? Colors.amber : null,
+              ),
+            ),
+            _ctrlMenu(),
+            IconButton(
+              icon: const Icon(Icons.settings_outlined),
+              tooltip: 'Настройки',
+              onPressed: _openSettings,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -296,10 +396,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             switch (_stream.state) {
               MjpegState.live => const SizedBox.shrink(),
               MjpegState.idle => const _VideoHint('стрим остановлен'),
-              MjpegState.connecting =>
-                const _VideoHint('подключение к стриму…'),
-              MjpegState.reconnecting =>
-                const _VideoHint('связь потеряна, переподключение…'),
+              MjpegState.connecting => const _VideoHint(
+                'подключение к стриму…',
+              ),
+              MjpegState.reconnecting => const _VideoHint(
+                'связь потеряна, переподключение…',
+              ),
             },
         ],
       ),
@@ -315,40 +417,45 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         : (size.height * 0.45).clamp(200.0, 330.0);
     // Крестовина — как в браузере: 2 ряда (▼ в ряду с ◀/▶), клетка та же
     // (side/3): в портрете панель на треть ниже — видео больше.
-    final double panelSide =
-        mode == 0 && !constrainedSide ? side * 2 / 3 : side;
+    final double panelSide = mode == 0 && !constrainedSide
+        ? side * 2 / 3
+        : side;
     final Widget control = switch (mode) {
       1 => JoystickWidget(
-            size: panelSide * 0.8,
-            onVector: (x, y) => _motor.updateVector(
-                x, y, _rs?.activeSpeed ?? 100, _rs?.activeTurn ?? 100),
-            onRelease: _motor.releaseVector,
-          ),
+        size: panelSide * 0.8,
+        onVector: (x, y) => _motor.updateVector(
+          x,
+          y,
+          _rs?.activeSpeed ?? 100,
+          _rs?.activeTurn ?? 100,
+        ),
+        onRelease: _motor.releaseVector,
+      ),
       2 => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            JoystickIndicator(size: panelSide * 0.8, vec: _gpadVec),
-            const SizedBox(height: 10),
-            Text(
-              _gpadNames.isEmpty
-                  ? 'Геймпад не найден — подключите его к телефону'
-                  : 'Геймпад: ${_gpadNames.first}',
-              style: Theme.of(context).textTheme.bodySmall,
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          JoystickIndicator(size: panelSide * 0.8, vec: _gpadVec),
+          const SizedBox(height: 10),
+          Text(
+            _gpadNames.isEmpty
+                ? 'Геймпад не найден — подключите его к телефону'
+                : 'Геймпад: ${_gpadNames.first}',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
       _ => DpadWidget(
-          onPress: (d) {
-            setState(() => _held.add(d));
-            _motor.pressDir(d);
-          },
-          onRelease: (d) {
-            setState(() => _held.remove(d));
-            _motor.releaseDir(d);
-          },
-          held: _held,
-        ),
+        onPress: (d) {
+          setState(() => _held.add(d));
+          _motor.pressDir(d);
+        },
+        onRelease: (d) {
+          setState(() => _held.remove(d));
+          _motor.releaseDir(d);
+        },
+        held: _held,
+      ),
     };
     return SizedBox(
       width: constrainedSide ? panelSide + 24 : double.infinity,
