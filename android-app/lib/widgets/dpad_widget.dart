@@ -48,12 +48,14 @@ class DpadWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Квадрат 3×3 по меньшей стороне отведённого места: корневой AspectRatio
-    // получает от панели ограниченные ширину и высоту, клетки Expanded делят
-    // квадрат поровну. (Голая AspectRatio-клетка в строке с бесконечной
-    // высотой растягивалась на всю ширину панели — кнопки улетали за экран.)
+    // Сетка 3×2: «вверх» отдельно, «вниз» — в одном ряду с «влево»/«вправо»
+    // (танковая схема: вперёд редко нужен одновременно с назад). Корневой
+    // AspectRatio получает от панели ограниченные ширину и высоту, клетки
+    // Expanded делят поле поровну. (Голая AspectRatio-клетка в строке с
+    // бесконечной высотой растягивалась на всю ширину панели — кнопки
+    // улетали за экран.)
     return AspectRatio(
-      aspectRatio: 1,
+      aspectRatio: 3 / 2,
       child: Column(
         children: [
           Expanded(
@@ -66,15 +68,8 @@ class DpadWidget extends StatelessWidget {
           Expanded(
             child: Row(children: [
               _cell(context, MotorDir.left, Icons.arrow_back),
-              _gap(),
-              _cell(context, MotorDir.right, Icons.arrow_forward),
-            ]),
-          ),
-          Expanded(
-            child: Row(children: [
-              _gap(),
               _cell(context, MotorDir.back, Icons.arrow_downward),
-              _gap(),
+              _cell(context, MotorDir.right, Icons.arrow_forward),
             ]),
           ),
         ],

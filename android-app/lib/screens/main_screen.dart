@@ -310,9 +310,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Widget _controlPanel({required bool constrainedSide}) {
     final int mode = _rs?.ctrl ?? 0;
     final Size size = MediaQuery.sizeOf(context);
-    final double panelSide = constrainedSide
+    final double side = constrainedSide
         ? (size.shortestSide * 0.55).clamp(220.0, 340.0)
         : (size.height * 0.45).clamp(200.0, 330.0);
+    // Крестовина — как в браузере: 2 ряда (▼ в ряду с ◀/▶), клетка та же
+    // (side/3): в портрете панель на треть ниже — видео больше.
+    final double panelSide =
+        mode == 0 && !constrainedSide ? side * 2 / 3 : side;
     final Widget control = switch (mode) {
       1 => JoystickWidget(
             size: panelSide * 0.8,
