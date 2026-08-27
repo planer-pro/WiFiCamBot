@@ -15,7 +15,48 @@ class RobotClient {
   final AppSettings Function() _settingsOf;
 
   final HttpClient _http = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 3);
+    ..connectionTimeout = const Duration(seconds: 3)
+    // медленные туннели (облако Keenetic): параллельные запросы душат канал
+    ..maxConnectionsPerHost = 1;
+
+  // Конвейер команд движения: максимум один запрос в полёте, новая команда
+  // заменяет ждущую (промежуточные состояния теряются — для управления это
+  // и нужно: важна последняя). Иначе на медленном канале команды копятся
+  // быстрее, чем уходят, и робот «доигрывает» очередь после отпускания.
+  String? _queued; // «имя=значение» последней несланной команды
+  bool _sending = false;
+
+  void sendCommand(String name, String value) {
+    _queued = '$name=$value';
+    unawaited(_commandLoop());
+  }
+
+  Future<void> _commandLoop() async {
+    if (_sending) {
+      return;
+    }
+    _sending = true;
+    try {
+      while (_queued != null) {
+        final String cmd = _queued!;
+        _queued = null;
+        final int sp = cmd.indexOf('=');
+        await _doSet(cmd.substring(0, sp), cmd.substring(sp + 1));
+      }
+    } finally {
+      _sending = false;
+    }
+  }
+
+  Future<void> _doSet(String name, String value) async {
+    try {
+      final req = await _http.getUrl(_uri('/set', {name: value}));
+      final res = await req.close().timeout(const Duration(seconds: 3));
+      await res.drain<void>().catchError((_) {});
+    } catch (_) {
+      // ошибка команды не страшна: сторожевой таймер платы сам остановит
+    }
+  }
 
   Uri _uri(String path, [Map<String, String>? query]) {
     var u = _settingsOf().baseUri.replace(path: path);

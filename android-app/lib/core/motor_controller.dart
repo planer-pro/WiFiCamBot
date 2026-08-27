@@ -56,9 +56,9 @@ class MotorController {
     }
     final String cmd = _dirCmd(_stack.last);
     _heldMix = '';
-    unawaited(_robot.setParam('motor', cmd));
+    _robot.sendCommand('motor', cmd);
     _keepalive = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      unawaited(_robot.setParam('motor', cmd));
+      _robot.sendCommand('motor', cmd);
     });
   }
 
@@ -84,9 +84,9 @@ class MotorController {
       return;
     }
     _heldMix = m;
-    unawaited(_robot.setParam('mix', m));
+    _robot.sendCommand('mix', m);
     _keepalive = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      unawaited(_robot.setParam('mix', m));
+      _robot.sendCommand('mix', m);
     });
   }
 
@@ -101,8 +101,8 @@ class MotorController {
 
   void _sendStop() {
     _keepalive?.cancel();
-    unawaited(_robot.setParam('mix', '0,0'));
-    unawaited(_robot.setParam('motor', 's'));
+    _robot.sendCommand('mix', '0,0');
+    _robot.sendCommand('motor', 's');
     _cancelStopRepeats();
     _stopCount = 0;
     _stopRepeats = Timer.periodic(const Duration(milliseconds: 400), (_) {
@@ -113,8 +113,8 @@ class MotorController {
         _stopRepeats = null;
         return;
       }
-      unawaited(_robot.setParam('mix', '0,0'));
-      unawaited(_robot.setParam('motor', 's'));
+      _robot.sendCommand('mix', '0,0');
+      _robot.sendCommand('motor', 's');
     });
   }
 
@@ -124,8 +124,8 @@ class MotorController {
     _heldMix = '';
     _keepalive?.cancel();
     _cancelStopRepeats();
-    unawaited(_robot.setParam('mix', '0,0'));
-    unawaited(_robot.setParam('motor', 's'));
+    _robot.sendCommand('mix', '0,0');
+    _robot.sendCommand('motor', 's');
   }
 
   void _cancelStopRepeats() {
