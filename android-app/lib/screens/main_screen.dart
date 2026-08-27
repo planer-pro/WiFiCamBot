@@ -37,6 +37,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final GamepadSource _gpadSrc = GamepadSource();
   StreamSubscription<GamepadEvent>? _gpadSub;
   Timer? _statusRetry; // повтор опроса статуса, пока робот недоступен
+  Timer? _warm; // прогрев командного соединения (первый старт без лага)
   List<String> _gpadNames = const [];
   Offset _gpadVec = Offset.zero;
   RobotSettings? _rs;
@@ -61,6 +62,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_app.hasAddress) {
       _stream.start();
     }
+    // держим командное соединение тёплым: без пинга сокет закрывается
+    // через 15 с простоя, и первая команда после паузы (через облако —
+    // секунды на TLS+релей) ехала бы с большим лагом
+    _warm = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (_app.hasAddress) {
+        _robot.warmUp();
+      }
+    });
     _syncGamepad(prevMode: -1);
   }
 
@@ -69,6 +78,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _gpadSub?.cancel();
     _statusRetry?.cancel();
+    _warm?.cancel();
     _motor.dispose();
     _stream.dispose();
     _robot.dispose();
@@ -168,8 +178,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     if (state == AppLifecycleState.paused) {
       _stream.stop();
+      _warm?.cancel();
+      _warm = null;
     } else if (state == AppLifecycleState.resumed) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      _warm ??= Timer.periodic(const Duration(seconds: 10), (_) {
+        if (_app.hasAddress) {
+          _robot.warmUp();
+        }
+      });
       if (_app.hasAddress && _stream.state == MjpegState.idle) {
         _stream.start();
       }

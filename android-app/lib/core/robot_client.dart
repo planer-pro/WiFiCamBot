@@ -113,6 +113,20 @@ class RobotClient {
     }
   }
 
+  /// Прогрев соединения: клиент держит неиспользуемые сокеты открытыми
+  /// лишь 15 с, а через облако установка нового соединения стоит секунд —
+  /// поэтому первая команда после простоя шла долго. Лёгкий пинг каждые
+  /// ~10 с держит сокет живым; результат не важен.
+  Future<void> warmUp() async {
+    try {
+      final req = await _http.getUrl(_uri('/status'));
+      final res = await req.close().timeout(_timeout);
+      await res.drain<void>().timeout(_timeout).catchError((_) {});
+    } catch (_) {
+      // недоступен — не страшно, команды всё равно уйдут при нажатии
+    }
+  }
+
   /// Текущие настройки робота одним запросом.
   Future<RobotSettings?> fetchStatus() async {
     try {
