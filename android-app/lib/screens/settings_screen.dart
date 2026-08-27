@@ -461,9 +461,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Widget> _robotRows() {
     final RobotSettings rs = _rs!;
     final bool buttonsMode = rs.ctrl == 0;
-    final String pairNote = buttonsMode
-        ? 'пара кнопочного вида'
-        : 'общая пара трекпада и геймпада';
     return [
       DropdownButtonFormField<int>(
         initialValue: rs.quality,
@@ -559,10 +556,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 12),
       DropdownButtonFormField<int>(
         initialValue: rs.activeSpeed,
-        decoration: InputDecoration(
+        decoration: const InputDecoration(
           labelText: 'Мощность хода, %',
-          helperText: pairNote,
-          border: const OutlineInputBorder(),
+          border: OutlineInputBorder(),
         ),
         items: _powerItems(rs.activeSpeed),
         onChanged: (v) => v == null
@@ -578,10 +574,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 12),
       DropdownButtonFormField<int>(
         initialValue: rs.activeTurn,
-        decoration: InputDecoration(
+        decoration: const InputDecoration(
           labelText: 'Мощность поворотов, %',
-          helperText: pairNote,
-          border: const OutlineInputBorder(),
+          border: OutlineInputBorder(),
         ),
         items: _powerItems(rs.activeTurn),
         onChanged: (v) => v == null

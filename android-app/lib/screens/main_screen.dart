@@ -255,6 +255,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Widget _connMenu() {
     final ThemeData th = Theme.of(context);
+    final IconData cur = _app.kind == ConnKind.inet
+        ? Icons.cloud
+        : Icons.router;
     PopupMenuItem<ConnKind> item(ConnKind k, IconData icon) =>
         PopupMenuItem<ConnKind>(
           value: k,
@@ -266,8 +269,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ],
           ),
         );
+    // закрытое состояние — только значок профиля (роутер/облако)
     return PopupMenuButton<ConnKind>(
-      tooltip: 'Подключение',
+      tooltip: 'Подключение: ${_app.kind.label}',
       initialValue: _app.kind,
       onSelected: _switchConn,
       itemBuilder: (_) => [
@@ -275,17 +279,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         item(ConnKind.inet, Icons.cloud_outlined),
       ],
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          children: [
-            Text(_app.kind.label, style: th.textTheme.bodySmall),
-            Icon(
-              Icons.arrow_drop_down,
-              size: 18,
-              color: th.colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        child: Icon(cur, size: 20, color: th.colorScheme.onSurfaceVariant),
       ),
     );
   }
@@ -485,7 +480,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           icon = Icons.settings;
           color = Colors.grey;
         } else if (_robotOk && st == MjpegState.live) {
-          label = 'На связи';
+          label = ''; // «на связи» — зелёная антенна говорит сама за себя
           icon = Icons.wifi;
           color = Colors.greenAccent;
         } else if (st == MjpegState.connecting ||
@@ -505,18 +500,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             child: Row(
               children: [
                 Icon(icon, color: color, size: 20),
-                const SizedBox(width: 8),
-                // статус сжимается с многоточием — на узком экране строка
-                // не переполняется и шестерёнка не улетает за край
-                Flexible(
-                  child: Text(
-                    label,
-                    style: TextStyle(color: color),
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
-                    maxLines: 1,
+                // текст только у проблемных состояний; «На связи» не пишем
+                // (иконка говорит сама), пустой текст и отступ не рисуем
+                if (label.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  // статус сжимается с многоточием — на узком экране строка
+                  // не переполняется и шестерёнка не улетает за край
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: TextStyle(color: color),
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                      maxLines: 1,
+                    ),
                   ),
-                ),
+                ],
                 _connMenu(),
                 const Spacer(),
                 Builder(
