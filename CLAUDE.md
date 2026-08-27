@@ -100,8 +100,10 @@ SD-карта и проводной последовательный порт н
   флаг ставит `setAPCallback` в `wmConfigure()`, снимает `portalBlinkStop()`
   после сворачивания портала). После подключения возвращается сохранённое
   состояние света (`applyLight()`).
-- Сервер — `esp_http_server` из ESP-IDF, **два экземпляра**: порт 80 — `/` и
-  `/set?quality=|rot=|light=|color=|motor=|mix=|ctrl=|speed=|tspeed=|accel=|taccel=|start=`,
+- Сервер — `esp_http_server` из ESP-IDF, **два экземпляра**: порт 80 — `/`,
+  `/set?quality=|rot=|light=|color=|motor=|mix=|ctrl=|speed=|tspeed=|accel=|taccel=|start=`
+  и `GET /status` (все текущие настройки одним JSON — для Android-клиента:
+  обе пары мощностей из NVS напрямую, `status_handler` рядом с `set_handler`),
   порт 81 — только `/stream`. Поток httpd у каждого экземпляра один, а
   `stream_handler` — бесконечный цикл: держать
   стрим на одном сервере с `/set` нельзя (пока открыт стрим, остальные запросы
@@ -232,6 +234,40 @@ SD-карта и проводной последовательный порт н
   `ota_0`/`ota_1` уже есть в `default_16MB.csv` — таблицу разделов не менять.
   Проверено на железе: OTA при открытом стриме работает (кадры замирают на
   время записи, потом всё продолжает).
+
+## Android-клиент (android-app/)
+
+Flutter-приложение — пульт робота (сборка и установка — `android-app/README.md`;
+прошивке нужен `GET /status`). Устройство:
+
+- **Один экран без скролла** (`screens/main_screen.dart`): видео сверху,
+  панель управления фиксированной высоты (портрет) или ширины (ландшафт).
+- **Вид управления** берётся с робота (`/status`): 0 — крестовина
+  (`widgets/dpad_widget.dart`), 1 — экранный джойстик
+  (`widgets/joystick_widget.dart`, математика трекпада), 2 — Bluetooth-геймпад
+  к телефону: `MainActivity.kt` читает ось левого стика через
+  `dispatchGenericMotionEvent` (EventChannel `wificambot/gamepad`, троттлинг
+  50 мс; разрешений BT не нужно — это устройство ввода), круг на экране —
+  индикатор.
+- **Логика движения** (`core/motor_controller.dart`) — порт веб-версии:
+  повтор активной команды каждые 500 мс, стоп с двумя дублями по 400 мс,
+  новое движение дубли отменяет; уход в фон/в настройки — немедленный стоп.
+  Смешивание ход+поворот в мощности гусениц — `core/mix_math.dart`
+  (1:1 с `mixFromVec` страницы, дедзоны 0.12/0.15).
+- **MJPEG** (`core/mjpeg_stream.dart`): свой HttpClient + разбор multipart
+  (boundary из Content-Type, кадр по Content-Length), декод с
+  `targetWidth` под размер виджета, очередь декода 1, реконнект через 1 с.
+  Смена качества/адреса — `restart()` (рвёт соединение).
+- **Настройки** (`screens/settings_screen.dart`): «Подключение» (адрес
+  робота, порт стрима, проверка связи; `wificambot.local` на Android обычно
+  не резолвится — вводить IP), «Робот» (все настройки робота, чтение
+  `/status`, запись `/set` с оптимистичным UI и откатом), «Приложение»
+  (смена пароля). Экран возвращает `(AppSettings, RobotSettings?)` — главный
+  экран применяет адрес и перезапускает стрим.
+- **Пароль входа** (дефолт `1234`): хэш sha256+соль в SharedPreferences
+  (`core/app_settings.dart`), экран блокировки `screens/lock_screen.dart`.
+- Манифест: `INTERNET` + `usesCleartextTraffic` (робот по http), метка
+  «WiFiCamBot». Пакет `local.wificambot.wificambot`.
 
 ## Подводные камни (проверено на этой версии ядра)
 

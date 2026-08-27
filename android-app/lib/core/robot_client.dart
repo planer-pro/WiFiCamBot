@@ -1,0 +1,80 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import '../models/robot_settings.dart';
+import 'app_settings.dart';
+
+/// HTTP-клиент робота: команды /set, чтение /status.
+/// Ошибки связи не бросает наружу — команды движения слать «в никуда» безопасно:
+/// сторожевой таймер платы сам остановит моторы через 1.5 с.
+class RobotClient {
+  RobotClient(this._settingsOf);
+
+  /// Функция отдаёт актуальный адрес робота (может поменяться в настройках).
+  final AppSettings Function() _settingsOf;
+
+  final HttpClient _http = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 3);
+
+  Uri _uri(String path, [Map<String, String>? query]) {
+    var u = _settingsOf().baseUri.replace(path: path);
+    if (query != null) {
+      u = u.replace(queryParameters: query);
+    }
+    return u;
+  }
+
+  /// GET /set?name=value — у платы строго один параметр за запрос.
+  /// true — плата подтвердила (200), false — ошибка/невалидное значение.
+  Future<bool> setParam(String name, String value) async {
+    try {
+      final req = await _http.getUrl(_uri('/set', {name: value}));
+      final res = await req.close().timeout(const Duration(seconds: 3));
+      await res.drain<void>().catchError((_) {});
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Смена вида управления; в ответе плата отдаёт «ход,поворот» выбранного
+  /// вида мощностей (например «75,50»).
+  Future<List<int>?> setCtrl(int mode) async {
+    try {
+      final req = await _http.getUrl(_uri('/set', {'ctrl': '$mode'}));
+      final res = await req.close().timeout(const Duration(seconds: 3));
+      final body = await utf8.decoder.bind(res).join();
+      if (res.statusCode != 200) {
+        return null;
+      }
+      final parts = body.split(',').map(int.tryParse).toList();
+      if (parts.length == 2 && parts.every((p) => p != null)) {
+        return parts.cast<int>();
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Текущие настройки робота одним запросом.
+  Future<RobotSettings?> fetchStatus() async {
+    try {
+      final req = await _http.getUrl(_uri('/status'));
+      final res = await req.close().timeout(const Duration(seconds: 3));
+      if (res.statusCode != 200) {
+        return null;
+      }
+      final body = await utf8.decoder.bind(res).join();
+      return RobotSettings.fromJson(
+          jsonDecode(body) as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void dispose() {
+    _http.close(force: true);
+  }
+}
