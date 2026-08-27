@@ -35,6 +35,10 @@
  *   /stream        — MJPEG-поток (multipart/x-mixed-replace), ОТДЕЛЬНЫЙ
  *                    сервер на порту 81: поток httpd один, и бесконечный
  *                    стрим-хэндлер блокирует остальные запросы (проверено).
+ *   /status        — все текущие настройки одним JSON (для Android-клиента):
+ *                    quality, rot, light, color, ctrl, скорости обеих пар
+ *                    (speed/tspeed кнопки, pspeed/ptspeed аналоговые виды),
+ *                    accel, taccel, start
  *
  * Настройки (качество, свет+цвет, мощности — свои у кнопочного и у
  * аналоговых видов управления, разгоны, точка страгивания, вид
@@ -1587,6 +1591,34 @@ static esp_err_t set_handler(httpd_req_t *req)
   return ESP_FAIL;
 }
 
+// Мощность из NVS с той же валидацией, что в loadPowers() (мусор → 100).
+static int savedPower(const char *key)
+{
+  int pct = (int)s_prefs.getUChar(key, 100);
+  return (pct >= 1 && pct <= 100) ? pct : 100;
+}
+
+// GET /status — все текущие настройки одним JSON-ответом (для Android-клиента;
+// страница пользуется метками @…@ и этот эндпоинт не читает). Мощности отдаются
+// ОБЕИМИ парами: speed/tspeed — кнопочный вид, pspeed/ptspeed — общая пара
+// аналоговых (трекпад/геймпад); в g_motorSpeed лежит лишь пара активного вида,
+// поэтому пары читаются из NVS напрямую.
+static esp_err_t status_handler(httpd_req_t *req)
+{
+  char buf[192];
+  snprintf(buf, sizeof(buf),
+           "{\"quality\":%d,\"rot\":%d,\"light\":%d,\"color\":%d,\"ctrl\":%d,"
+           "\"speed\":%d,\"tspeed\":%d,\"pspeed\":%d,\"ptspeed\":%d,"
+           "\"accel\":%u,\"taccel\":%u,\"start\":%d}",
+           (int)g_quality, (int)g_rotation, g_lightOn ? 1 : 0,
+           (int)g_lightColor, (int)g_ctrlMode, savedPower("speed"),
+           savedPower("tspeed"), savedPower("pspeed"), savedPower("ptspeed"),
+           (unsigned)g_accelMs, (unsigned)g_turnAccelMs, (int)g_motorStartPct);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, buf, strlen(buf));
+}
+
 static esp_err_t index_handler(httpd_req_t *req)
 {
   httpd_resp_set_type(req, "text/html");
@@ -1708,8 +1740,11 @@ static void startWebServer()
         .uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
     const httpd_uri_t uri_set = {
         .uri = "/set", .method = HTTP_GET, .handler = set_handler, .user_ctx = NULL};
+    const httpd_uri_t uri_status = {
+        .uri = "/status", .method = HTTP_GET, .handler = status_handler, .user_ctx = NULL};
     httpd_register_uri_handler(s_httpdMain, &uri_index);
     httpd_register_uri_handler(s_httpdMain, &uri_set);
+    httpd_register_uri_handler(s_httpdMain, &uri_status);
   }
 
   httpd_config_t streamConfig = HTTPD_DEFAULT_CONFIG();
