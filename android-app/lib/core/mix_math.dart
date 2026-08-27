@@ -14,7 +14,7 @@ import 'dart:math';
 /// Строка «L,R» для /set?mix=.
 String mixString(int l, int r) => '$l,$r';
 
-/// Мёртвая зона ЭКРАННОГО джойстика — как у трекпада веб-версии: 0.12 радиуса,
+/// Мёртвая зона экранного трекпада — как в веб-версии: 0.12 радиуса,
 /// без растяжки шкалы; выход за круг прижимается к краю. Вне зоны — ноль.
 ({double x, double y}) joystickDeadzone(double x, double y) {
   final double len = sqrt(x * x + y * y);

@@ -20,13 +20,12 @@ class DpadWidget extends StatelessWidget {
   Widget _cell(BuildContext context, MotorDir d, IconData icon) {
     final bool on = held.contains(d);
     final ColorScheme cs = Theme.of(context).colorScheme;
-    return Listener(
-      behavior: HitTestBehavior.opaque,
-      onPointerDown: (_) => onPress(d),
-      onPointerUp: (_) => onRelease(d),
-      onPointerCancel: (_) => onRelease(d),
-      child: AspectRatio(
-        aspectRatio: 1,
+    return Expanded(
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (_) => onPress(d),
+        onPointerUp: (_) => onRelease(d),
+        onPointerCancel: (_) => onRelease(d),
         child: Container(
           margin: const EdgeInsets.all(6),
           decoration: BoxDecoration(
@@ -37,35 +36,49 @@ class DpadWidget extends StatelessWidget {
               width: 2,
             ),
           ),
-          child: Icon(icon, size: 34, color: on ? cs.onPrimary : null),
+          child: Center(
+            child: Icon(icon, size: 34, color: on ? cs.onPrimary : null),
+          ),
         ),
       ),
     );
   }
 
-  Widget _gap() => const AspectRatio(aspectRatio: 1, child: SizedBox());
+  Widget _gap() => const Expanded(child: SizedBox());
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          _gap(),
-          _cell(context, MotorDir.fwd, Icons.arrow_upward),
-          _gap(),
-        ]),
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          _cell(context, MotorDir.left, Icons.arrow_back),
-          _gap(),
-          _cell(context, MotorDir.right, Icons.arrow_forward),
-        ]),
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          _gap(),
-          _cell(context, MotorDir.back, Icons.arrow_downward),
-          _gap(),
-        ]),
-      ],
+    // Квадрат 3×3 по меньшей стороне отведённого места: корневой AspectRatio
+    // получает от панели ограниченные ширину и высоту, клетки Expanded делят
+    // квадрат поровну. (Голая AspectRatio-клетка в строке с бесконечной
+    // высотой растягивалась на всю ширину панели — кнопки улетали за экран.)
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(children: [
+              _gap(),
+              _cell(context, MotorDir.fwd, Icons.arrow_upward),
+              _gap(),
+            ]),
+          ),
+          Expanded(
+            child: Row(children: [
+              _cell(context, MotorDir.left, Icons.arrow_back),
+              _gap(),
+              _cell(context, MotorDir.right, Icons.arrow_forward),
+            ]),
+          ),
+          Expanded(
+            child: Row(children: [
+              _gap(),
+              _cell(context, MotorDir.back, Icons.arrow_downward),
+              _gap(),
+            ]),
+          ),
+        ],
+      ),
     );
   }
 }

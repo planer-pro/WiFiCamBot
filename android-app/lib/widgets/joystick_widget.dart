@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/mix_math.dart';
 
-/// Рисунок круга джойстика: поле, крестовина-указатель, ручка.
+/// Рисунок круга трекпада: поле, крестовина-указатель, ручка.
 class JoystickPainter extends CustomPainter {
   JoystickPainter({required this.vec, required this.accent});
 
@@ -44,7 +44,7 @@ class JoystickPainter extends CustomPainter {
       oldDelegate.vec != vec || oldDelegate.accent != accent;
 }
 
-/// Экранный джойстик (вид управления «джойстик»): палец задаёт направление
+/// Экранный трекпад (вид управления «трекпад»): палец задаёт направление
 /// и мощность — отклонение от центра, за круг не выходит, в центре мёртвая
 /// зона, отпускание — стоп. Математика трекпада веб-версии.
 class JoystickWidget extends StatefulWidget {

@@ -343,7 +343,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final bool buttonsMode = rs.ctrl == 0;
     final String pairNote = buttonsMode
         ? 'пара кнопочного вида'
-        : 'общая пара джойстика и геймпада';
+        : 'общая пара трекпада и геймпада';
     return [
       DropdownButtonFormField<int>(
         initialValue: rs.quality,

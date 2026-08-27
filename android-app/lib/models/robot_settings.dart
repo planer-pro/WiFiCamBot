@@ -23,10 +23,10 @@ class RobotSettings {
   final int rot; // 0/90/180/270 — поворот кадра (только отрисовка)
   final int light; // 0/1 — свет вкл/выкл
   final int color; // 0..7 — индекс LIGHT_COLORS
-  final int ctrl; // 0 кнопки, 1 джойстик, 2 геймпад
+  final int ctrl; // 0 кнопки, 1 трекпад, 2 геймпад
   final int speed; // мощность хода, кнопочный вид (1..100)
   final int tspeed; // мощность поворотов, кнопочный вид
-  final int pspeed; // мощность хода, аналоговые виды (джойстик/геймпад)
+  final int pspeed; // мощность хода, аналоговые виды (трекпад/геймпад)
   final int ptspeed; // мощность поворотов, аналоговые виды
   final int accel; // разгон хода, мс (MOTOR_ACCEL_STEPS)
   final int taccel; // разгон поворотов, мс
@@ -113,7 +113,7 @@ class RobotSettings {
         _ => '$ms мс',
       };
 
-  static const List<String> ctrlLabels = ['Кнопки', 'Джойстик', 'Геймпад'];
+  static const List<String> ctrlLabels = ['Кнопки', 'Трекпад', 'Геймпад'];
 
   static const List<int> rotSteps = [0, 90, 180, 270];
 }
