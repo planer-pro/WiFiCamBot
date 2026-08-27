@@ -10,7 +10,7 @@ Flutter-приложение для управления роботом WiFiCamB
   автопереподключение через 1 с при обрыве.
 - **Управление** (виды — как у робота, читаются из его настроек):
   - *Кнопки* — крестовина, удержание = движение, отпускание = стоп;
-  - *Джойстик* — экранный круг: отклонение задаёт направление и мощность;
+  - *Трекпад* — экранный круг: отклонение задаёт направление и мощность;
   - *Геймпад* — Bluetooth-геймпад, подключённый к телефону (левый стик);
     для Android это устройство ввода, разрешений не нужно.
 - Повтор команды каждые 500 мс при удержании (страховка от сторожевого
@@ -31,17 +31,27 @@ Flutter-приложение для управления роботом WiFiCamB
 
 ## Сборка
 
-Требуются Flutter SDK и Android SDK (platform 36):
+Требуются Flutter SDK и Android SDK (platform 36). Готовые APK лежат в `apk/`
+(в git не коммитятся — артефакты сборки):
+
+- `apk/wificambot-universal.apk` — универсальный, нативные библиотеки сразу
+  для всех архитектур (armeabi-v7a, arm64-v8a, x86_64); встанет куда угодно,
+  включая эмуляторы;
+- `apk/wificambot-arm64.apk` — только arm64 (все современные телефоны);
+  функционально тот же, но втрое меньше — удобнее передавать на телефон.
+
+Оба собираются из одного кода, отличаются только набором архитектур:
 
 ```bash
 cd android-app
 flutter pub get
-flutter build apk --release
-# готовый файл:
-# build/app/outputs/flutter-apk/app-release.apk
+flutter build apk --release               # универсальный → app-release.apk
+flutter build apk --release --split-per-abi  # компактные → app-arm64-v8a-release.apk …
+cp build/app/outputs/flutter-apk/app-release.apk apk/wificambot-universal.apk
+cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk apk/wificambot-arm64.apk
 ```
 
-Установка на телефон (отладка по USB): `adb install -r build/app/outputs/flutter-apk/app-release.apk`
+Установка на телефон (отладка по USB): `adb install -r apk/wificambot-arm64.apk`
 
 APK подписан отладочным ключом (для личной установки достаточно; обновления
 ставятся поверх тем же ключом с этой машины).
