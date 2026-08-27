@@ -58,7 +58,10 @@ class RobotClient {
     try {
       final req = await _http.getUrl(_uri('/set', {name: value}));
       final res = await req.close().timeout(_timeout);
-      await res.drain<void>().catchError((_) {});
+      // тело тоже под таймаутом: зависший посреди ответа сокет (обрыв
+      // релея облака, полумёртвый keep-alive) иначе держит конвейер
+      // команд занятым НАВСЕГДА — моторы и свет умирают разом
+      await res.drain<void>().timeout(_timeout).catchError((_) {});
     } catch (_) {
       // ошибка команды не страшна: сторожевой таймер платы сам остановит
     }
@@ -83,7 +86,7 @@ class RobotClient {
     try {
       final req = await _http.getUrl(_uri('/set', {name: value}));
       final res = await req.close().timeout(_timeout);
-      await res.drain<void>().catchError((_) {});
+      await res.drain<void>().timeout(_timeout).catchError((_) {});
       return res.statusCode == 200;
     } catch (_) {
       return false;
@@ -96,7 +99,7 @@ class RobotClient {
     try {
       final req = await _http.getUrl(_uri('/set', {'ctrl': '$mode'}));
       final res = await req.close().timeout(_timeout);
-      final body = await utf8.decoder.bind(res).join();
+      final body = await utf8.decoder.bind(res).join().timeout(_timeout);
       if (res.statusCode != 200) {
         return null;
       }
@@ -118,7 +121,7 @@ class RobotClient {
       if (res.statusCode != 200) {
         return null;
       }
-      final body = await utf8.decoder.bind(res).join();
+      final body = await utf8.decoder.bind(res).join().timeout(_timeout);
       return RobotSettings.fromJson(jsonDecode(body) as Map<String, dynamic>);
     } catch (_) {
       return null;
