@@ -7,16 +7,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Локальные настройки приложения: адрес робота и пароль входа.
 /// (Настройки самого робота — в models/robot_settings.dart.)
 class AppSettings {
-  const AppSettings({this.baseUrl = '', this.streamPort = 81});
+  const AppSettings({this.baseUrl = '', this.streamPort = 81, this.streamUrl = ''});
 
   /// Базовый адрес робота: «http://192.168.1.137» или «192.168.1.137»
   /// (без схемы считается http). Для доступа извне локальной сети —
-  /// внешний адрес/туннель.
+  /// внешний адрес/туннель (например «https://robot.myhome3.netcraze.link»).
   final String baseUrl;
 
   /// Порт MJPEG-стрима (у робота 81; для внешнего доступа прокидывается
-  /// отдельно, как в tunnel.sh).
+  /// отдельно, как в tunnel.sh). Игнорируется, если задан [streamUrl].
   final int streamPort;
+
+  /// Полный URL стрима для доступа извне, где стрим живёт на отдельном
+  /// адресе (облако Keenetic: «https://stream.myhome3.netcraze.link»).
+  /// Пусто — стрим берётся с хоста робота на порт [streamPort].
+  final String streamUrl;
 
   bool get hasAddress => baseUrl.trim().isNotEmpty;
 
@@ -29,12 +34,25 @@ class AppSettings {
     return Uri.parse(s);
   }
 
-  /// URL стрима: тот же хост, порт стрима.
-  Uri get streamUri => baseUri.replace(port: streamPort, path: '/stream');
+  /// URL стрима: полный override, если задан (без пути — дописываем
+  /// «/stream»), иначе тот же хост, порт стрима.
+  Uri get streamUri {
+    var s = streamUrl.trim();
+    if (s.isEmpty) {
+      return baseUri.replace(port: streamPort, path: '/stream');
+    }
+    if (!s.startsWith('http://') && !s.startsWith('https://')) {
+      s = 'https://$s';
+    }
+    final Uri u = Uri.parse(s);
+    return u.path.isEmpty ? u.replace(path: '/stream') : u;
+  }
 
-  AppSettings copyWith({String? baseUrl, int? streamPort}) => AppSettings(
+  AppSettings copyWith({String? baseUrl, int? streamPort, String? streamUrl}) =>
+      AppSettings(
         baseUrl: baseUrl ?? this.baseUrl,
         streamPort: streamPort ?? this.streamPort,
+        streamUrl: streamUrl ?? this.streamUrl,
       );
 }
 
@@ -46,6 +64,7 @@ class SettingsStore {
 
   static const String _kBaseUrl = 'base_url';
   static const String _kStreamPort = 'stream_port';
+  static const String _kStreamUrl = 'stream_url';
   static const String _kSalt = 'pin_salt';
   static const String _kPinHash = 'pin_hash';
 
@@ -54,11 +73,13 @@ class SettingsStore {
   AppSettings get settings => AppSettings(
         baseUrl: _prefs.getString(_kBaseUrl) ?? '',
         streamPort: _prefs.getInt(_kStreamPort) ?? 81,
+        streamUrl: _prefs.getString(_kStreamUrl) ?? '',
       );
 
   Future<void> saveSettings(AppSettings s) async {
     await _prefs.setString(_kBaseUrl, s.baseUrl.trim());
     await _prefs.setInt(_kStreamPort, s.streamPort);
+    await _prefs.setString(_kStreamUrl, s.streamUrl.trim());
   }
 
   /// Пользователь менял пароль (иначе действует стандартный 1234).

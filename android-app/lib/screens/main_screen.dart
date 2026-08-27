@@ -175,7 +175,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       return;
     }
     final bool urlChanged = res.app.baseUrl != _app.baseUrl ||
-        res.app.streamPort != _app.streamPort;
+        res.app.streamPort != _app.streamPort ||
+        res.app.streamUrl != _app.streamUrl;
     final bool qualityChanged =
         res.rs != null && _rs != null && res.rs!.quality != _rs!.quality;
     final int prevCtrl = _rs?.ctrl ?? 0;

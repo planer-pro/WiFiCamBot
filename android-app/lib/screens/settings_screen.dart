@@ -29,6 +29,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   late final TextEditingController _url;
   late final TextEditingController _port;
+  late final TextEditingController _streamUrl;
   final TextEditingController _oldPin = TextEditingController();
   final TextEditingController _newPin = TextEditingController();
   final TextEditingController _repeatPin = TextEditingController();
@@ -43,6 +44,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _url = TextEditingController(text: widget.appSettings.baseUrl);
     _port = TextEditingController(text: '${widget.appSettings.streamPort}');
+    _streamUrl = TextEditingController(text: widget.appSettings.streamUrl);
     _robot = RobotClient(() => widget.appSettings);
     _rs = widget.robotSettings;
     if (_rs == null) {
@@ -54,6 +56,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _url.dispose();
     _port.dispose();
+    _streamUrl.dispose();
     _oldPin.dispose();
     _newPin.dispose();
     _repeatPin.dispose();
@@ -79,6 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       app: AppSettings(
         baseUrl: _url.text.trim(),
         streamPort: (port != null && port > 0 && port < 65536) ? port : 81,
+        streamUrl: _streamUrl.text.trim(),
       ),
       rs: _rs,
     );
@@ -219,7 +223,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 labelText: 'Адрес робота',
                 hintText: 'http://192.168.1.137',
                 helperText: 'Для доступа извне — внешний адрес/туннель '
-                    '(оба порта: этот и стрим)',
+                    'или домен Keenetic (https://robot…)',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.router_outlined),
               ),
@@ -234,6 +238,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 hintText: '81',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.videocam_outlined),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _streamUrl,
+              keyboardType: TextInputType.url,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'Полный URL стрима (необязательно)',
+                hintText: 'https://stream.myhome3.netcraze.link',
+                helperText: 'Когда стрим доступен по отдельному адресу '
+                    '(облако Keenetic). Пусто — адрес робота + порт стрима',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.cloud_outlined),
               ),
             ),
             const SizedBox(height: 12),
