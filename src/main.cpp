@@ -56,6 +56,7 @@
  */
 
 #include <Arduino.h>
+#include <ctype.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
@@ -1440,6 +1441,25 @@ static bool applyQuality(int level)
   return true;
 }
 
+// %-декодирование на месте: httpd_query_key_value не декодирует %XX,
+// а некоторые клиенты кодируют запятую в mix=L,R как %2C.
+static void urlDecode(char *s)
+{
+  char *w = s;
+  for (char *r = s; *r; r++)
+  {
+    if (r[0] == '%' && isxdigit((unsigned char)r[1]) && isxdigit((unsigned char)r[2]))
+    {
+      char hex[3] = {r[1], r[2], 0};
+      *w++ = (char)strtol(hex, nullptr, 16);
+      r += 2;
+    }
+    else
+      *w++ = *r;
+  }
+  *w = '\0';
+}
+
 // GET /set?quality=N | light=0|1 | color=N — управление со страницы.
 // Цвет применяется сразу (если свет выключен — запоминается до включения).
 static esp_err_t set_handler(httpd_req_t *req)
@@ -1497,6 +1517,7 @@ static esp_err_t set_handler(httpd_req_t *req)
     }
     else if (httpd_query_key_value(query, "mix", mixv, sizeof(mixv)) == ESP_OK)
     {
+      urlDecode(mixv);
       char *comma = strchr(mixv, ','); // "L,R" — мощности левой/правой гусениц
       if (comma)
       {

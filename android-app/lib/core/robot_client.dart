@@ -20,7 +20,11 @@ class RobotClient {
   Uri _uri(String path, [Map<String, String>? query]) {
     var u = _settingsOf().baseUri.replace(path: path);
     if (query != null) {
-      u = u.replace(queryParameters: query);
+      // строку запроса собираем сами: прошивка ждёт буквальную запятую
+      // в mix=L,R, а queryParameters закодировала бы её в %2C
+      final String q =
+          query.entries.map((e) => '${e.key}=${e.value}').join('&');
+      u = u.replace(query: q);
     }
     return u;
   }
