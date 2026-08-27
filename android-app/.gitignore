@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Готовые APK (копируются сюда после сборки — см. README)
+/apk/
