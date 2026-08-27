@@ -31,10 +31,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   late AppSettings _app;
   late RobotClient _robot;
+  late RobotClient _statusRobot; // отдельный клиент чтения /status
   late MjpegStream _stream;
   late MotorController _motor;
   final GamepadSource _gpadSrc = GamepadSource();
   StreamSubscription<GamepadEvent>? _gpadSub;
+  Timer? _statusRetry; // повтор опроса статуса, пока робот недоступен
   List<String> _gpadNames = const [];
   Offset _gpadVec = Offset.zero;
   RobotSettings? _rs;
@@ -46,6 +48,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     super.initState();
     _app = widget.store.settings;
     _robot = RobotClient(() => _app);
+    // чтению /status через облако Keenetic нужен запас (замеры до 7 с);
+    // командам движения остаётся короткий таймаут — их подстрахует
+    // сторожевой таймер платы
+    _statusRobot = RobotClient(() => _app, timeout: const Duration(seconds: 8));
     _stream = MjpegStream(urlOf: () => _app.streamUri);
     _motor = MotorController(_robot);
     WidgetsBinding.instance.addObserver(this);
@@ -62,9 +68,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _gpadSub?.cancel();
+    _statusRetry?.cancel();
     _motor.dispose();
     _stream.dispose();
     _robot.dispose();
+    _statusRobot.dispose();
     _setKeepScreenOn(false);
     super.dispose();
   }
@@ -76,13 +84,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   // ---- связь и настройки робота ----
 
   Future<void> _refreshStatus() async {
+    _statusRetry?.cancel();
     if (!_app.hasAddress) {
       if (mounted) {
         setState(() => _robotOk = false);
       }
       return;
     }
-    final RobotSettings? rs = await _robot.fetchStatus();
+    final RobotSettings? rs = await _statusRobot.fetchStatus();
     if (!mounted) {
       return;
     }
@@ -91,6 +100,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _robotOk = rs != null;
     });
     _syncGamepad();
+    // робот не ответил (профиль только что переключён, облако медленное,
+    // робот перезагружается) — сами повторяем через паузу, без нажатий
+    if (rs == null) {
+      _statusRetry = Timer(const Duration(seconds: 3), _refreshStatus);
+    }
   }
 
   /// Включает/выключает подписку на геймпад по виду управления.
@@ -367,58 +381,66 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Widget _topBar() {
-    final MjpegState st = _stream.state;
-    final String label;
-    final IconData icon;
-    final Color color;
-    if (!_app.hasAddress) {
-      label = 'Адрес не задан';
-      icon = Icons.settings;
-      color = Colors.grey;
-    } else if (_robotOk && st == MjpegState.live) {
-      label = 'На связи';
-      icon = Icons.wifi;
-      color = Colors.greenAccent;
-    } else if (st == MjpegState.connecting || st == MjpegState.reconnecting) {
-      label = 'Подключение…';
-      icon = Icons.wifi_find;
-      color = Colors.amber;
-    } else {
-      label = 'Нет связи';
-      icon = Icons.wifi_off;
-      color = Colors.redAccent;
-    }
-    return SizedBox(
-      height: 48,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Row(
-          children: [
-            Icon(icon, color: color, size: 20),
-            const SizedBox(width: 8),
-            Text(label, style: TextStyle(color: color)),
-            _connMenu(),
-            const Spacer(),
-            IconButton(
-              tooltip: 'Свет',
-              onPressed: _rs == null ? null : _toggleLight,
-              icon: Icon(
-                (_rs?.light ?? 0) != 0
-                    ? Icons.lightbulb
-                    : Icons.lightbulb_outline,
-                size: 20,
-                color: (_rs?.light ?? 0) != 0 ? Colors.amber : null,
-              ),
+    // панель слушает стрим: индикатор сам оживает при смене состояния
+    // (иначе «Подключение…» висело до первого нажатия — setState экрана)
+    return ListenableBuilder(
+      listenable: _stream,
+      builder: (context, _) {
+        final MjpegState st = _stream.state;
+        final String label;
+        final IconData icon;
+        final Color color;
+        if (!_app.hasAddress) {
+          label = 'Адрес не задан';
+          icon = Icons.settings;
+          color = Colors.grey;
+        } else if (_robotOk && st == MjpegState.live) {
+          label = 'На связи';
+          icon = Icons.wifi;
+          color = Colors.greenAccent;
+        } else if (st == MjpegState.connecting ||
+            st == MjpegState.reconnecting) {
+          label = 'Подключение…';
+          icon = Icons.wifi_find;
+          color = Colors.amber;
+        } else {
+          label = 'Нет связи';
+          icon = Icons.wifi_off;
+          color = Colors.redAccent;
+        }
+        return SizedBox(
+          height: 48,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                Icon(icon, color: color, size: 20),
+                const SizedBox(width: 8),
+                Text(label, style: TextStyle(color: color)),
+                _connMenu(),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Свет',
+                  onPressed: _rs == null ? null : _toggleLight,
+                  icon: Icon(
+                    (_rs?.light ?? 0) != 0
+                        ? Icons.lightbulb
+                        : Icons.lightbulb_outline,
+                    size: 20,
+                    color: (_rs?.light ?? 0) != 0 ? Colors.amber : null,
+                  ),
+                ),
+                _ctrlMenu(),
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  tooltip: 'Настройки',
+                  onPressed: _openSettings,
+                ),
+              ],
             ),
-            _ctrlMenu(),
-            IconButton(
-              icon: const Icon(Icons.settings_outlined),
-              tooltip: 'Настройки',
-              onPressed: _openSettings,
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
