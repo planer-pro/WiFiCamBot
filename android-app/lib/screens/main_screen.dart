@@ -320,6 +320,79 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Быстрая палитра цветов (удержание кнопки света): кружки как в
+  /// настройках робота, текущий обведён. Выбор цвета на выключенном свете
+  /// заодно включает его (прошивка при смене цвета сама свет не поднимает).
+  Future<void> _pickColor(BuildContext anchor) async {
+    final RobotSettings? rs = _rs;
+    if (rs == null) {
+      return;
+    }
+    final RenderBox? box = anchor.findRenderObject() as RenderBox?;
+    final OverlayState? ov = Overlay.maybeOf(context, rootOverlay: true);
+    if (box == null || ov == null) {
+      return;
+    }
+    final Offset tl = box.localToGlobal(
+      Offset.zero,
+      ancestor: ov.context.findRenderObject(),
+    );
+    final RelativeRect pos = RelativeRect.fromRect(
+      Rect.fromPoints(tl, tl + box.size.bottomRight(Offset.zero)),
+      Offset.zero & (ov.context.findRenderObject() as RenderBox?)!.size,
+    );
+    final int? pick = await showMenu<int>(
+      context: context,
+      position: pos,
+      items: [
+        for (int i = 0; i < RobotSettings.colorSwatches.length; i++)
+          PopupMenuItem(
+            value: i,
+            child: Row(
+              children: [
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: RobotSettings.colorSwatches[i],
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: i == rs.color
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.white24,
+                      width: i == rs.color ? 2.5 : 1,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(RobotSettings.colorLabels[i]),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (pick != null) {
+      _setColor(pick);
+    }
+  }
+
+  Future<void> _setColor(int c) async {
+    final RobotSettings? rs = _rs;
+    if (rs == null || rs.color == c) {
+      return;
+    }
+    final bool wasOff = rs.light == 0;
+    setState(() => _rs = rs.copyWith(color: c, light: wasOff ? 1 : rs.light));
+    bool ok = await _robot.setParam('color', '$c');
+    if (ok && wasOff) {
+      // прошивка принимает один параметр за запрос — включаем отдельно
+      ok = await _robot.setParam('light', '1') && ok;
+    }
+    if (!ok && mounted) {
+      setState(() => _rs = rs);
+    }
+  }
+
   Widget _ctrlMenu() {
     final int mode = _rs?.ctrl ?? 0;
     final ThemeData th = Theme.of(context);
@@ -429,15 +502,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
                 _connMenu(),
                 const Spacer(),
-                IconButton(
-                  tooltip: 'Свет',
-                  onPressed: _rs == null ? null : _toggleLight,
-                  icon: Icon(
-                    (_rs?.light ?? 0) != 0
-                        ? Icons.lightbulb
-                        : Icons.lightbulb_outline,
-                    size: 20,
-                    color: (_rs?.light ?? 0) != 0 ? Colors.amber : null,
+                Builder(
+                  builder: (btnCtx) => IconButton(
+                    tooltip: 'Свет — переключить; удержание — цвет',
+                    onPressed: _rs == null ? null : _toggleLight,
+                    onLongPress: _rs == null ? null : () => _pickColor(btnCtx),
+                    icon: Icon(
+                      (_rs?.light ?? 0) != 0
+                          ? Icons.lightbulb
+                          : Icons.lightbulb_outline,
+                      size: 20,
+                      color: (_rs?.light ?? 0) != 0 ? Colors.amber : null,
+                    ),
                   ),
                 ),
                 _ctrlMenu(),
