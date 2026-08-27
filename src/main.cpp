@@ -1229,7 +1229,15 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       if (pads[i]) { gp = pads[i]; break; }
     if (!gp)
     {
-      gpadStop(); // вдруг геймпад отключили при отклонённом стике
+      // геймпад исчез при отклонённом стике — стоп как при отпускании
+      // трекпада, и продублировать его: застрявшие в очереди команды
+      // движения могли бы догнать одиночный стоп (см. stopRepeat).
+      // mixSent === '' — ничего и не отправляли, стоп не нужен
+      if (mixSent !== '0,0' && mixSent !== '')
+      {
+        gpadStop();
+        stopRepeat();
+      }
       knob.style.transform = 'translate(-50%,-50%)';
       trackEl.className = 'track ro';
       gstatEl.textContent = window.isSecureContext
