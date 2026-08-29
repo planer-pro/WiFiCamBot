@@ -8,6 +8,13 @@ import 'package:flutter/foundation.dart';
 
 enum MjpegState { idle, connecting, live, reconnecting }
 
+/// Сторож чтения: столько можно ждать очередной порцию байтов стрима.
+/// При резком отключении питания робот не успевает закрыть соединение
+/// (нет FIN/RST) — TCP-чтение молчит вечно, стрим «замирал» в live
+/// при выключенном роботе: замёрзший кадр, зелёный индикатор. Нет данных
+/// дольше этого времени — связь считаем мёртвой и переподключаемся.
+const Duration _readTimeout = Duration(seconds: 3);
+
 /// Приём MJPEG-потока робота (multipart/x-mixed-replace) и декодирование
 /// кадров. Один кадр в памяти, очередь декода глубиной 1 (пока кадр
 /// декодируется, новые скипаются — поток быстрее декодера, гоняться
@@ -74,8 +81,12 @@ class MjpegStream extends ChangeNotifier {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
     _http = client;
     try {
-      final req = await client.getUrl(urlOf());
-      final res = await req.close();
+      // подключение тоже под таймаутом (с запасом на TLS+релей облака):
+      // зависший getUrl/close оставил бы индикатор в «Подключение…» навечно
+      final req = await client
+          .getUrl(urlOf())
+          .timeout(const Duration(seconds: 8));
+      final res = await req.close().timeout(const Duration(seconds: 8));
       if (!_running || generation != _generation) {
         return;
       }
@@ -133,6 +144,9 @@ class MjpegStream extends ChangeNotifier {
     }
 
     final StreamIterator<List<int>> it = StreamIterator(res);
+    // чтение под сторож-таймаутом (_readTimeout): обрывается и «тихая»
+    // смерть соединения — иначе moveNext висел вечно
+    Future<bool> more() => it.moveNext().timeout(_readTimeout);
     try {
       while (true) {
         // 1. ждём маркер границы
@@ -141,7 +155,7 @@ class MjpegStream extends ChangeNotifier {
           if (bytes.length > cap) {
             throw const SocketException('mjpeg: маркер не найден');
           }
-          if (!await it.moveNext()) {
+          if (!await more()) {
             return;
           }
           bytes = bytes.sublist(math.max(0, bytes.length - marker.length + 1))
@@ -154,7 +168,7 @@ class MjpegStream extends ChangeNotifier {
           if (bytes.length > cap) {
             throw const SocketException('mjpeg: нет конца заголовков');
           }
-          if (!await it.moveNext()) {
+          if (!await more()) {
             return;
           }
           bytes.addAll(it.current);
@@ -172,7 +186,7 @@ class MjpegStream extends ChangeNotifier {
         final int bodyStart = hend + headerEnd.length;
         // 3. ждём кадр целиком
         while (bytes.length < bodyStart + frameLen) {
-          if (!await it.moveNext()) {
+          if (!await more()) {
             return;
           }
           bytes.addAll(it.current);

@@ -582,13 +582,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         alignment: Alignment.center,
         children: [
           MjpegView(stream: _stream, rot: _rs?.rot ?? 90),
-          if (_stream.image == null)
-            switch (_stream.state) {
-              MjpegState.live => const SizedBox.shrink(),
-              MjpegState.idle => _VideoHint(s.streamStopped),
-              MjpegState.connecting => _VideoHint(s.streamConnecting),
-              MjpegState.reconnecting => _VideoHint(s.streamReconnecting),
-            },
+          // подсказка при любом неживом состоянии — и ПОВЕРХ замёрзшего
+          // кадра (робот пропал: последний кадр остаётся на экране,
+          // но связь уже порвалась — без подсказки это выглядело живым)
+          switch (_stream.state) {
+            MjpegState.live => const SizedBox.shrink(),
+            MjpegState.idle => _VideoHint(s.streamStopped),
+            MjpegState.connecting => _VideoHint(s.streamConnecting),
+            MjpegState.reconnecting => _VideoHint(s.streamReconnecting),
+          },
         ],
       ),
     );
