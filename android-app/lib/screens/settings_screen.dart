@@ -210,7 +210,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final String old = _oldPin.text;
     final String pin = _newPin.text;
     if (pin.length < 4) {
-      _snack('Новый пароль — не меньше 4 символов');
+      _snack('Новый пароль — не меньше 4 цифр');
       return;
     }
     if (pin != _repeatPin.text) {
@@ -408,9 +408,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ] else
               ..._robotRows(),
             _section('Приложение'),
+            // пароль только цифровой — иначе его не ввести на крупном
+            // цифровом паде экрана входа
             TextField(
               controller: _oldPin,
               obscureText: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(12),
+              ],
               decoration: const InputDecoration(
                 labelText: 'Текущий пароль',
                 border: OutlineInputBorder(),
@@ -421,6 +428,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             TextField(
               controller: _newPin,
               obscureText: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(12),
+              ],
               decoration: const InputDecoration(
                 labelText: 'Новый пароль',
                 border: OutlineInputBorder(),
@@ -430,6 +442,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             TextField(
               controller: _repeatPin,
               obscureText: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(12),
+              ],
               onSubmitted: (_) => _changePin(),
               decoration: const InputDecoration(
                 labelText: 'Повторите новый пароль',
