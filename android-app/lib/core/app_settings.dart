@@ -167,12 +167,10 @@ class SettingsStore {
   bool get hasCustomPin => (_prefs.getString(_kSalt) ?? '').isNotEmpty;
 
   /// Язык интерфейса (умолчание русский).
-  AppLocale get locale => _prefs.getString(_kLocale) == 'en'
-      ? AppLocale.en
-      : AppLocale.ru;
+  AppLocale get locale =>
+      _prefs.getString(_kLocale) == 'en' ? AppLocale.en : AppLocale.ru;
 
-  Future<void> saveLocale(AppLocale l) =>
-      _prefs.setString(_kLocale, l.name);
+  Future<void> saveLocale(AppLocale l) => _prefs.setString(_kLocale, l.name);
 
   Future<bool> checkPin(String pin) async {
     if (!hasCustomPin) {

@@ -220,7 +220,12 @@ class _Keypad extends StatelessWidget {
         semantic = k;
         accent = false;
     }
-    return _PadKey(onTap: tap, semanticLabel: semantic, accent: accent, child: icon);
+    return _PadKey(
+      onTap: tap,
+      semanticLabel: semantic,
+      accent: accent,
+      child: icon,
+    );
   }
 
   @override

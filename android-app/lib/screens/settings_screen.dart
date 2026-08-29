@@ -329,9 +329,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   RadioListTile<ConnKind>(
                     value: ConnKind.inet,
                     title: Text(s.connInetTitle),
-                    subtitle: _kind == ConnKind.inet
-                        ? Text(s.activeNow)
-                        : null,
+                    subtitle: _kind == ConnKind.inet ? Text(s.activeNow) : null,
                     secondary: const Icon(Icons.cloud_outlined),
                     contentPadding: EdgeInsets.zero,
                   ),
@@ -419,14 +417,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 prefixIcon: const Icon(Icons.translate),
               ),
               items: const [
-                DropdownMenuItem(
-                  value: AppLocale.ru,
-                  child: Text('Русский'),
-                ),
-                DropdownMenuItem(
-                  value: AppLocale.en,
-                  child: Text('English'),
-                ),
+                DropdownMenuItem(value: AppLocale.ru, child: Text('Русский')),
+                DropdownMenuItem(value: AppLocale.en, child: Text('English')),
               ],
               onChanged: (AppLocale? v) {
                 if (v == null || v == localeNotifier.value) {
@@ -542,7 +534,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
         onChanged: (v) => v == null
             ? null
-            : _setParam(s.frameRotation, (r) => r.copyWith(rot: v), 'rot', '$v'),
+            : _setParam(
+                s.frameRotation,
+                (r) => r.copyWith(rot: v),
+                'rot',
+                '$v',
+              ),
       ),
       const SizedBox(height: 12),
       DropdownButtonFormField<int>(
@@ -593,7 +590,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
         onChanged: (v) => v == null
             ? null
-            : _setParam(s.lightColor, (r) => r.copyWith(color: v), 'color', '$v'),
+            : _setParam(
+                s.lightColor,
+                (r) => r.copyWith(color: v),
+                'color',
+                '$v',
+              ),
       ),
       const SizedBox(height: 12),
       DropdownButtonFormField<int>(

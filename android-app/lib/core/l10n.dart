@@ -250,7 +250,8 @@ final Strings _ru = Strings(
   accelDisabledHere:
       'Разгоны в этом виде управления отключены (движение мгновенное)',
   startPoint: 'Точка страгивания, % ШИМ (0–90)',
-  startPointHelper: 'Мощность, ниже которой танк не трогается; '
+  startPointHelper:
+      'Мощность, ниже которой танк не трогается; '
       'Enter — применить',
   accelOff: 'отключено',
   secShort: 'с',
@@ -343,9 +344,11 @@ final Strings _en = Strings(
   turnPower: 'Turn power, %',
   driveAccel: 'Drive ramp-up',
   turnAccel: 'Turn ramp-up',
-  accelDisabledHere: 'Ramp-up is off in this control mode (movement is instant)',
+  accelDisabledHere:
+      'Ramp-up is off in this control mode (movement is instant)',
   startPoint: 'Stall point, % PWM (0–90)',
-  startPointHelper: 'Power below which the tank won’t move; '
+  startPointHelper:
+      'Power below which the tank won’t move; '
       'press Done to apply',
   accelOff: 'off',
   secShort: 's',

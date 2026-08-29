@@ -65,9 +65,10 @@ class RobotClient {
           // страховочный таймаут на ВЕСЬ запрос: даже если внутри что-то
           // зависнет неожиданным образом, конвейер обязан освободиться —
           // иначе одна команда хоронит управление до перезапуска приложения
-          await _doSet(cmd.substring(0, sp), cmd.substring(sp + 1)).timeout(
-            _timeout * 2,
-          );
+          await _doSet(
+            cmd.substring(0, sp),
+            cmd.substring(sp + 1),
+          ).timeout(_timeout * 2);
         } catch (_) {
           // команда не прошла — не страшно: повторит keepalive/следующее
           // движение, а стоп подстрахует сторожевой таймер платы
@@ -106,11 +107,7 @@ class RobotClient {
     try {
       final req = await http.getUrl(uri).timeout(_timeout);
       final res = await req.close().timeout(_timeout);
-      final String body = await utf8
-          .decoder
-          .bind(res)
-          .join()
-          .timeout(_timeout);
+      final String body = await utf8.decoder.bind(res).join().timeout(_timeout);
       return res.statusCode == 200 ? body : null;
     } catch (_) {
       if (recycleOnFail) {

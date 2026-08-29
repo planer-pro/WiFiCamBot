@@ -309,9 +309,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     if (pair == null) {
       setState(() => _rs = rs);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.ctrlNotAccepted)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.ctrlNotAccepted)));
       return;
     }
     setState(
