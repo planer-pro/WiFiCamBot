@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'l10n.dart';
+
 /// Профиль подключения: адрес робота + параметры стрима.
 /// (Настройки самого робота — в models/robot_settings.dart.)
 class ConnProfile {
@@ -63,10 +65,6 @@ class ConnProfile {
 /// Какое подключение активно: локальная сеть или интернет.
 enum ConnKind { local, inet }
 
-extension ConnKindX on ConnKind {
-  String get label => this == ConnKind.inet ? 'Интернет' : 'Локальное';
-}
-
 /// Локальные настройки приложения: два профиля подключения и пароль входа.
 class AppSettings {
   const AppSettings({
@@ -120,6 +118,7 @@ class SettingsStore {
   static const String _kStreamUrl = 'stream_url';
   static const String _kSalt = 'pin_salt';
   static const String _kPinHash = 'pin_hash';
+  static const String _kLocale = 'locale';
 
   final SharedPreferences _prefs;
 
@@ -166,6 +165,14 @@ class SettingsStore {
 
   /// Пользователь менял пароль (иначе действует стандартный 1234).
   bool get hasCustomPin => (_prefs.getString(_kSalt) ?? '').isNotEmpty;
+
+  /// Язык интерфейса (умолчание русский).
+  AppLocale get locale => _prefs.getString(_kLocale) == 'en'
+      ? AppLocale.en
+      : AppLocale.ru;
+
+  Future<void> saveLocale(AppLocale l) =>
+      _prefs.setString(_kLocale, l.name);
 
   Future<bool> checkPin(String pin) async {
     if (!hasCustomPin) {

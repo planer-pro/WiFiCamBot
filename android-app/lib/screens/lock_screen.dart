@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/app_settings.dart';
+import '../core/l10n.dart';
 import 'main_screen.dart';
 
 /// Вход в приложение по паролю (стандартный — 1234, меняется в настройках).
@@ -59,7 +60,7 @@ class _LockScreenState extends State<LockScreen> {
     } else {
       HapticFeedback.vibrate();
       setState(() {
-        _error = 'Неверный пароль';
+        _error = L10n.of(context).wrongPin;
         _pin = '';
       });
     }
@@ -67,6 +68,7 @@ class _LockScreenState extends State<LockScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final Strings s = L10n.of(context);
     final bool firstRun = !widget.store.hasCustomPin;
     return Scaffold(
       body: SafeArea(
@@ -89,6 +91,12 @@ class _LockScreenState extends State<LockScreen> {
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                     const SizedBox(height: 28),
+                    Text(
+                      s.enterPin,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 4),
                     _PinDots(count: _pin.length, max: _pinMax),
                     // место под ошибку зарезервировано — пад не прыгает
                     SizedBox(
@@ -104,6 +112,7 @@ class _LockScreenState extends State<LockScreen> {
                             ),
                     ),
                     _Keypad(
+                      s: s,
                       pin: _pin,
                       onDigit: _digit,
                       onBackspace: _backspace,
@@ -112,7 +121,7 @@ class _LockScreenState extends State<LockScreen> {
                     if (firstRun) ...[
                       const SizedBox(height: 20),
                       Text(
-                        'Стандартный пароль: 1234\n(меняется в настройках)',
+                        s.defaultPinHint,
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
@@ -161,12 +170,14 @@ class _PinDots extends StatelessWidget {
 /// Крупный цифровой пад: 1–9, ⌫, 0 и «войти» (✓).
 class _Keypad extends StatelessWidget {
   const _Keypad({
+    required this.s,
     required this.pin,
     required this.onDigit,
     required this.onBackspace,
     required this.onSubmit,
   });
 
+  final Strings s;
   final String pin;
   final void Function(int d) onDigit;
   final VoidCallback onBackspace;
@@ -189,7 +200,7 @@ class _Keypad extends StatelessWidget {
       case 'del':
         icon = Icon(Icons.backspace_outlined, size: 28, color: cs.primary);
         tap = pin.isEmpty ? null : onBackspace;
-        semantic = 'Стереть';
+        semantic = s.eraseKey;
         accent = false;
       case 'ok':
         icon = Icon(
@@ -198,7 +209,7 @@ class _Keypad extends StatelessWidget {
           color: pin.isEmpty ? null : cs.onPrimary,
         );
         tap = pin.isEmpty ? null : onSubmit;
-        semantic = 'Войти';
+        semantic = s.signIn;
         accent = true;
       default:
         icon = Text(

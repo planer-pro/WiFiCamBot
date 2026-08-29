@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/app_settings.dart';
+import '../core/l10n.dart';
 import '../core/robot_client.dart';
 import '../models/robot_settings.dart';
 
@@ -139,12 +142,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (rs == null) {
       return;
     }
+    final Strings s = L10n.of(context);
     final RobotSettings next = change(rs);
     setState(() => _rs = next);
     if (!await _robot.setParam(name, value)) {
       if (mounted) {
         setState(() => _rs = rs);
-        _snack('Робот не принял «$title»');
+        _snack(s.robotRejected(title));
       }
     }
   }
@@ -154,6 +158,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (rs == null) {
       return;
     }
+    final Strings s = L10n.of(context);
     setState(() => _rs = rs.copyWith(ctrl: mode));
     final List<int>? pair = await _robot.setCtrl(mode);
     if (!mounted) {
@@ -161,7 +166,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     if (pair == null) {
       setState(() => _rs = rs);
-      _snack('Робот не принял вид управления');
+      _snack(s.ctrlNotAccepted);
       return;
     }
     // в ответе — пара мощностей выбранного вида; кладём её в свою пару
@@ -179,7 +184,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ---- проверка связи с введённым адресом ----
 
   Future<void> _testConnection(ConnKind k) async {
-    setState(() => _connTest[k] = 'Проверяю…');
+    final Strings s = L10n.of(context);
+    setState(() => _connTest[k] = s.testing);
     final RobotClient probe = RobotClient(
       () => AppSettings(
         local: _profileOf(ConnKind.local),
@@ -195,9 +201,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     setState(() {
       _connTest[k] = rs != null
-          ? 'Робот отвечает (${RobotSettings.qualityLabels[rs.quality]}), '
-                'вид управления: ${RobotSettings.ctrlLabels[rs.ctrl]}'
-          : 'Нет ответа — проверьте адрес и что робот в сети';
+          ? s.testOk(s.qualityLabels[rs.quality], s.ctrlLabels[rs.ctrl])
+          : s.testFail;
       if (rs != null && _rs == null) {
         _rs = rs;
       }
@@ -207,31 +212,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ---- смена пароля ----
 
   Future<void> _changePin() async {
+    final Strings s = L10n.of(context);
     final String old = _oldPin.text;
     final String pin = _newPin.text;
     if (pin.length < 4) {
-      _snack('Новый пароль — не меньше 4 цифр');
+      _snack(s.pinTooShort);
       return;
     }
     if (pin != _repeatPin.text) {
-      _snack('Новый пароль и повтор не совпадают');
+      _snack(s.pinsMismatch);
       return;
     }
     if (!await widget.store.checkPin(old)) {
-      _snack('Текущий пароль неверный');
+      _snack(s.pinWrong);
       return;
     }
     await widget.store.setPin(pin);
     _oldPin.clear();
     _newPin.clear();
     _repeatPin.clear();
-    _snack('Пароль изменён');
+    _snack(s.pinChanged);
   }
 
   // ---- построение ----
 
   @override
   Widget build(BuildContext context) {
+    final Strings s = L10n.of(context);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (bool didPop, Object? _) {
@@ -241,13 +248,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Настройки'),
-          actions: [TextButton(onPressed: _pop, child: const Text('Готово'))],
+          title: Text(s.settings),
+          actions: [TextButton(onPressed: _pop, child: Text(s.done))],
         ),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           children: [
-            _section('Подключение'),
+            _section(s.sectionConn),
             // RadioGroup — общий предок обоих переключателей (профили
             // разнесены полями ввода); ядро 3.32+ требует так вместо
             // groupValue/onChanged у каждой плитки
@@ -259,9 +266,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   RadioListTile<ConnKind>(
                     value: ConnKind.local,
-                    title: const Text('Подключение локальное'),
+                    title: Text(s.connLocalTitle),
                     subtitle: _kind == ConnKind.local
-                        ? const Text('активно — используется сейчас')
+                        ? Text(s.activeNow)
                         : null,
                     secondary: const Icon(Icons.home_outlined),
                     contentPadding: EdgeInsets.zero,
@@ -271,14 +278,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     keyboardType: TextInputType.url,
                     autocorrect: false,
                     enableSuggestions: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Адрес робота',
+                    decoration: InputDecoration(
+                      labelText: s.robotAddress,
                       hintText: 'http://192.168.1.137',
-                      helperText:
-                          'В сети робота (дома); wificambot.local на '
-                          'Android обычно не резолвится — вводите IP',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.router_outlined),
+                      helperText: s.robotAddressLocalHelper,
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.router_outlined),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -286,11 +291,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     controller: _lPort,
                     keyboardType: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                      labelText: 'Порт стрима',
+                    decoration: InputDecoration(
+                      labelText: s.streamPort,
                       hintText: '81',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.videocam_outlined),
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.videocam_outlined),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -299,21 +304,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     keyboardType: TextInputType.url,
                     autocorrect: false,
                     enableSuggestions: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Полный URL стрима (необязательно)',
+                    decoration: InputDecoration(
+                      labelText: s.streamUrlOptional,
                       hintText: 'http://192.168.1.137:81',
-                      helperText:
-                          'Когда стрим доступен по отдельному адресу. '
-                          'Пусто — адрес робота + порт стрима',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.link),
+                      helperText: s.streamUrlHelperLocal,
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.link),
                     ),
                   ),
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
                     onPressed: () => _testConnection(ConnKind.local),
                     icon: const Icon(Icons.network_check),
-                    label: const Text('Проверить связь'),
+                    label: Text(s.testConn),
                   ),
                   if (_connTest[ConnKind.local] != null) ...[
                     const SizedBox(height: 8),
@@ -325,9 +328,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: 12),
                   RadioListTile<ConnKind>(
                     value: ConnKind.inet,
-                    title: const Text('Подключение интернет'),
+                    title: Text(s.connInetTitle),
                     subtitle: _kind == ConnKind.inet
-                        ? const Text('активно — используется сейчас')
+                        ? Text(s.activeNow)
                         : null,
                     secondary: const Icon(Icons.cloud_outlined),
                     contentPadding: EdgeInsets.zero,
@@ -337,12 +340,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     keyboardType: TextInputType.url,
                     autocorrect: false,
                     enableSuggestions: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Адрес робота',
+                    decoration: InputDecoration(
+                      labelText: s.robotAddress,
                       hintText: 'https://robot.myhome3.netcraze.link',
-                      helperText: 'Внешний адрес/туннель или домен Keenetic',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.public),
+                      helperText: s.inetAddressHelper,
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.public),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -350,11 +353,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     controller: _iPort,
                     keyboardType: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                      labelText: 'Порт стрима',
+                    decoration: InputDecoration(
+                      labelText: s.streamPort,
                       hintText: '81',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.videocam_outlined),
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.videocam_outlined),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -363,21 +366,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     keyboardType: TextInputType.url,
                     autocorrect: false,
                     enableSuggestions: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Полный URL стрима (необязательно)',
+                    decoration: InputDecoration(
+                      labelText: s.streamUrlOptional,
                       hintText: 'https://stream.myhome3.netcraze.link',
-                      helperText:
-                          'Когда стрим доступен по отдельному адресу '
-                          '(облако Keenetic). Пусто — адрес робота + порт стрима',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.cloud_outlined),
+                      helperText: s.streamUrlHelperInet,
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.cloud_outlined),
                     ),
                   ),
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
                     onPressed: () => _testConnection(ConnKind.inet),
                     icon: const Icon(Icons.network_check),
-                    label: const Text('Проверить связь'),
+                    label: Text(s.testConn),
                   ),
                   if (_connTest[ConnKind.inet] != null) ...[
                     const SizedBox(height: 8),
@@ -389,25 +390,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
-            _section('Робот'),
+            _section(s.sectionRobot),
             if (_loading)
               const Padding(
                 padding: EdgeInsets.all(16),
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (_rs == null) ...[
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text('Робот не отвечает — проверьте адрес и связь'),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(s.robotSilent),
               ),
               OutlinedButton.icon(
                 onPressed: _loadStatus,
                 icon: const Icon(Icons.refresh),
-                label: const Text('Повторить'),
+                label: Text(s.retry),
               ),
             ] else
               ..._robotRows(),
-            _section('Приложение'),
+            _section(s.sectionApp),
+            // язык интерфейса: пункты — на самих языках (Русский/English),
+            // применяется сразу и запоминается
+            DropdownButtonFormField<AppLocale>(
+              initialValue: widget.store.locale,
+              decoration: InputDecoration(
+                labelText: s.language,
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.translate),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: AppLocale.ru,
+                  child: Text('Русский'),
+                ),
+                DropdownMenuItem(
+                  value: AppLocale.en,
+                  child: Text('English'),
+                ),
+              ],
+              onChanged: (AppLocale? v) {
+                if (v == null || v == localeNotifier.value) {
+                  return;
+                }
+                setState(() {}); // сам список
+                localeNotifier.value = v; // всё дерево — через слушателя
+                unawaited(widget.store.saveLocale(v));
+              },
+            ),
+            const SizedBox(height: 12),
             // пароль только цифровой — иначе его не ввести на крупном
             // цифровом паде экрана входа
             TextField(
@@ -418,10 +448,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 FilteringTextInputFormatter.digitsOnly,
                 LengthLimitingTextInputFormatter(12),
               ],
-              decoration: const InputDecoration(
-                labelText: 'Текущий пароль',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.lock_outline),
+              decoration: InputDecoration(
+                labelText: s.currentPin,
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.lock_outline),
               ),
             ),
             const SizedBox(height: 12),
@@ -433,9 +463,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 FilteringTextInputFormatter.digitsOnly,
                 LengthLimitingTextInputFormatter(12),
               ],
-              decoration: const InputDecoration(
-                labelText: 'Новый пароль',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: s.newPin,
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 12),
@@ -448,16 +478,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 LengthLimitingTextInputFormatter(12),
               ],
               onSubmitted: (_) => _changePin(),
-              decoration: const InputDecoration(
-                labelText: 'Повторите новый пароль',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: s.repeatNewPin,
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _changePin,
               icon: const Icon(Icons.key),
-              label: const Text('Сменить пароль'),
+              label: Text(s.changePin),
             ),
           ],
         ),
@@ -476,27 +506,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   );
 
   List<Widget> _robotRows() {
+    final Strings s = L10n.of(context);
     final RobotSettings rs = _rs!;
     final bool buttonsMode = rs.ctrl == 0;
     return [
       DropdownButtonFormField<int>(
         initialValue: rs.quality,
-        decoration: const InputDecoration(
-          labelText: 'Качество видео',
-          border: OutlineInputBorder(),
+        decoration: InputDecoration(
+          labelText: s.videoQuality,
+          border: const OutlineInputBorder(),
         ),
         items: [
-          for (int i = 0; i < RobotSettings.qualityLabels.length; i++)
-            DropdownMenuItem(
-              value: i,
-              child: Text(RobotSettings.qualityLabels[i]),
-            ),
+          for (int i = 0; i < s.qualityLabels.length; i++)
+            DropdownMenuItem(value: i, child: Text(s.qualityLabels[i])),
         ],
         onChanged: (v) => v == null
             ? null
             : _setParam(
-                'качество',
-                (s) => s.copyWith(quality: v),
+                s.videoQuality,
+                (r) => r.copyWith(quality: v),
                 'quality',
                 '$v',
               ),
@@ -504,9 +532,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 12),
       DropdownButtonFormField<int>(
         initialValue: rs.rot,
-        decoration: const InputDecoration(
-          labelText: 'Поворот кадра',
-          border: OutlineInputBorder(),
+        decoration: InputDecoration(
+          labelText: s.frameRotation,
+          border: const OutlineInputBorder(),
         ),
         items: [
           for (final int deg in RobotSettings.rotSteps)
@@ -514,44 +542,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
         onChanged: (v) => v == null
             ? null
-            : _setParam('поворот', (s) => s.copyWith(rot: v), 'rot', '$v'),
+            : _setParam(s.frameRotation, (r) => r.copyWith(rot: v), 'rot', '$v'),
       ),
       const SizedBox(height: 12),
       DropdownButtonFormField<int>(
         initialValue: rs.ctrl,
-        decoration: const InputDecoration(
-          labelText: 'Управление',
-          border: OutlineInputBorder(),
+        decoration: InputDecoration(
+          labelText: s.control,
+          border: const OutlineInputBorder(),
         ),
         items: [
-          for (int i = 0; i < RobotSettings.ctrlLabels.length; i++)
-            DropdownMenuItem(
-              value: i,
-              child: Text(RobotSettings.ctrlLabels[i]),
-            ),
+          for (int i = 0; i < s.ctrlLabels.length; i++)
+            DropdownMenuItem(value: i, child: Text(s.ctrlLabels[i])),
         ],
         onChanged: (v) => v == null ? null : _changeCtrl(v),
       ),
       const SizedBox(height: 12),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
-        title: const Text('Свет'),
+        title: Text(s.light),
         value: rs.light != 0,
         onChanged: (on) => _setParam(
-          'свет',
-          (s) => s.copyWith(light: on ? 1 : 0),
+          s.light,
+          (r) => r.copyWith(light: on ? 1 : 0),
           'light',
           on ? '1' : '0',
         ),
       ),
       DropdownButtonFormField<int>(
         initialValue: rs.color,
-        decoration: const InputDecoration(
-          labelText: 'Цвет света',
-          border: OutlineInputBorder(),
+        decoration: InputDecoration(
+          labelText: s.lightColor,
+          border: const OutlineInputBorder(),
         ),
         items: [
-          for (int i = 0; i < RobotSettings.colorLabels.length; i++)
+          for (int i = 0; i < s.colorLabels.length; i++)
             DropdownMenuItem(
               value: i,
               child: Row(
@@ -561,29 +586,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     backgroundColor: RobotSettings.colorSwatches[i],
                   ),
                   const SizedBox(width: 10),
-                  Text(RobotSettings.colorLabels[i]),
+                  Text(s.colorLabels[i]),
                 ],
               ),
             ),
         ],
         onChanged: (v) => v == null
             ? null
-            : _setParam('цвет', (s) => s.copyWith(color: v), 'color', '$v'),
+            : _setParam(s.lightColor, (r) => r.copyWith(color: v), 'color', '$v'),
       ),
       const SizedBox(height: 12),
       DropdownButtonFormField<int>(
         initialValue: rs.activeSpeed,
-        decoration: const InputDecoration(
-          labelText: 'Мощность хода, %',
-          border: OutlineInputBorder(),
+        decoration: InputDecoration(
+          labelText: s.drivePower,
+          border: const OutlineInputBorder(),
         ),
         items: _powerItems(rs.activeSpeed),
         onChanged: (v) => v == null
             ? null
             : _setParam(
-                'мощность хода',
-                (s) =>
-                    buttonsMode ? s.copyWith(speed: v) : s.copyWith(pspeed: v),
+                s.drivePower,
+                (r) =>
+                    buttonsMode ? r.copyWith(speed: v) : r.copyWith(pspeed: v),
                 'speed',
                 '$v',
               ),
@@ -591,18 +616,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 12),
       DropdownButtonFormField<int>(
         initialValue: rs.activeTurn,
-        decoration: const InputDecoration(
-          labelText: 'Мощность поворотов, %',
-          border: OutlineInputBorder(),
+        decoration: InputDecoration(
+          labelText: s.turnPower,
+          border: const OutlineInputBorder(),
         ),
         items: _powerItems(rs.activeTurn),
         onChanged: (v) => v == null
             ? null
             : _setParam(
-                'мощность поворотов',
-                (s) => buttonsMode
-                    ? s.copyWith(tspeed: v)
-                    : s.copyWith(ptspeed: v),
+                s.turnPower,
+                (r) => buttonsMode
+                    ? r.copyWith(tspeed: v)
+                    : r.copyWith(ptspeed: v),
                 'tspeed',
                 '$v',
               ),
@@ -611,22 +636,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (buttonsMode) ...[
         DropdownButtonFormField<int>(
           initialValue: rs.accel,
-          decoration: const InputDecoration(
-            labelText: 'Разгон хода',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: s.driveAccel,
+            border: const OutlineInputBorder(),
           ),
           items: [
             for (final int ms in RobotSettings.accelSteps)
-              DropdownMenuItem(
-                value: ms,
-                child: Text(RobotSettings.accelLabel(ms)),
-              ),
+              DropdownMenuItem(value: ms, child: Text(s.accelLabel(ms))),
           ],
           onChanged: (v) => v == null
               ? null
               : _setParam(
-                  'разгон хода',
-                  (s) => s.copyWith(accel: v),
+                  s.driveAccel,
+                  (r) => r.copyWith(accel: v),
                   'accel',
                   '$v',
                 ),
@@ -634,40 +656,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 12),
         DropdownButtonFormField<int>(
           initialValue: rs.taccel,
-          decoration: const InputDecoration(
-            labelText: 'Разгон поворотов',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: s.turnAccel,
+            border: const OutlineInputBorder(),
           ),
           items: [
             for (final int ms in RobotSettings.accelSteps)
-              DropdownMenuItem(
-                value: ms,
-                child: Text(RobotSettings.accelLabel(ms)),
-              ),
+              DropdownMenuItem(value: ms, child: Text(s.accelLabel(ms))),
           ],
           onChanged: (v) => v == null
               ? null
               : _setParam(
-                  'разгон поворотов',
-                  (s) => s.copyWith(taccel: v),
+                  s.turnAccel,
+                  (r) => r.copyWith(taccel: v),
                   'taccel',
                   '$v',
                 ),
         ),
         const SizedBox(height: 12),
       ] else
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 4),
-          child: Text(
-            'Разгоны в этом виде управления отключены '
-            '(движение мгновенное)',
-          ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(s.accelDisabledHere),
         ),
       _StartField(
         value: rs.start,
         onChanged: (int cl) => _setParam(
-          'точка страгирования',
-          (s) => s.copyWith(start: cl),
+          s.startPoint,
+          (r) => r.copyWith(start: cl),
           'start',
           '$cl',
         ),

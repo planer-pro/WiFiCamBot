@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../core/app_settings.dart';
 import '../core/gamepad_source.dart';
+import '../core/l10n.dart';
 import '../core/mix_math.dart';
 import '../core/mjpeg_stream.dart';
 import '../core/motor_controller.dart';
@@ -253,8 +254,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _refreshStatus();
   }
 
+  /// Метка профиля подключения (подписи — локализованные).
+  String _connLabel(ConnKind k, Strings s) =>
+      k == ConnKind.inet ? s.connInet : s.connLocal;
+
   Widget _connMenu() {
     final ThemeData th = Theme.of(context);
+    final Strings s = L10n.of(context);
     final IconData cur = _app.kind == ConnKind.inet
         ? Icons.cloud
         : Icons.router;
@@ -265,13 +271,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             children: [
               Icon(icon, size: 18, color: th.colorScheme.onSurfaceVariant),
               const SizedBox(width: 8),
-              Text(k.label),
+              Text(_connLabel(k, s)),
             ],
           ),
         );
     // закрытое состояние — только значок профиля (роутер/облако)
     return PopupMenuButton<ConnKind>(
-      tooltip: 'Подключение: ${_app.kind.label}',
+      tooltip: s.connTooltip(_connLabel(_app.kind, s)),
       initialValue: _app.kind,
       onSelected: _switchConn,
       itemBuilder: (_) => [
@@ -294,6 +300,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (rs == null || rs.ctrl == mode) {
       return;
     }
+    final Strings s = L10n.of(context);
     setState(() => _rs = rs.copyWith(ctrl: mode));
     _syncGamepad(prevMode: rs.ctrl); // смена вида во время движения — стоп
     final List<int>? pair = await _robot.setCtrl(mode);
@@ -303,7 +310,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (pair == null) {
       setState(() => _rs = rs);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Робот не принял вид управления')),
+        SnackBar(content: Text(s.ctrlNotAccepted)),
       );
       return;
     }
@@ -340,6 +347,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (rs == null) {
       return;
     }
+    final Strings s = L10n.of(context);
     final RenderBox? box = anchor.findRenderObject() as RenderBox?;
     final OverlayState? ov = Overlay.maybeOf(context, rootOverlay: true);
     if (box == null || ov == null) {
@@ -377,7 +385,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Text(RobotSettings.colorLabels[i]),
+                Text(s.colorLabels[i]),
               ],
             ),
           ),
@@ -408,20 +416,21 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Widget _ctrlMenu() {
     final int mode = _rs?.ctrl ?? 0;
     final ThemeData th = Theme.of(context);
+    final Strings s = L10n.of(context);
     return PopupMenuButton<int>(
-      tooltip: 'Вид управления',
+      tooltip: s.ctrlMode,
       initialValue: mode,
       enabled: _rs != null,
       onSelected: _changeCtrl,
       itemBuilder: (_) => [
-        for (int i = 0; i < RobotSettings.ctrlLabels.length; i++)
-          PopupMenuItem(value: i, child: Text(RobotSettings.ctrlLabels[i])),
+        for (int i = 0; i < s.ctrlLabels.length; i++)
+          PopupMenuItem(value: i, child: Text(s.ctrlLabels[i])),
       ],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
           children: [
-            Text(RobotSettings.ctrlLabels[mode], style: th.textTheme.bodySmall),
+            Text(s.ctrlLabels[mode], style: th.textTheme.bodySmall),
             Icon(
               Icons.arrow_drop_down,
               size: 18,
@@ -471,12 +480,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     return ListenableBuilder(
       listenable: _stream,
       builder: (context, _) {
+        final Strings s = L10n.of(context);
         final MjpegState st = _stream.state;
         final String label;
         final IconData icon;
         final Color color;
         if (!_app.hasAddress) {
-          label = 'Адрес не задан';
+          label = s.noAddress;
           icon = Icons.settings;
           color = Colors.grey;
         } else if (_robotOk && st == MjpegState.live) {
@@ -485,11 +495,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           color = Colors.greenAccent;
         } else if (st == MjpegState.connecting ||
             st == MjpegState.reconnecting) {
-          label = 'Подключение…';
+          label = s.connecting;
           icon = Icons.wifi_find;
           color = Colors.amber;
         } else {
-          label = 'Нет связи';
+          label = s.disconnected;
           icon = Icons.wifi_off;
           color = Colors.redAccent;
         }
@@ -520,7 +530,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 const Spacer(),
                 Builder(
                   builder: (btnCtx) => IconButton(
-                    tooltip: 'Свет — переключить; удержание — цвет',
+                    tooltip: L10n.of(context).lightTooltip,
                     onPressed: _rs == null ? null : _toggleLight,
                     onLongPress: _rs == null ? null : () => _pickColor(btnCtx),
                     icon: Icon(
@@ -535,7 +545,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 _ctrlMenu(),
                 IconButton(
                   icon: const Icon(Icons.settings_outlined),
-                  tooltip: 'Настройки',
+                  tooltip: L10n.of(context).settings,
                   onPressed: _openSettings,
                 ),
               ],
@@ -547,6 +557,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Widget _videoArea() {
+    final Strings s = L10n.of(context);
     if (!_app.hasAddress) {
       return Center(
         child: Column(
@@ -554,12 +565,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           children: [
             const Icon(Icons.router_outlined, size: 56),
             const SizedBox(height: 12),
-            const Text('Адрес робота не задан'),
+            Text(s.robotAddressMissing),
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _openSettings,
               icon: const Icon(Icons.settings),
-              label: const Text('Открыть настройки'),
+              label: Text(s.openSettings),
             ),
           ],
         ),
@@ -574,13 +585,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           if (_stream.image == null)
             switch (_stream.state) {
               MjpegState.live => const SizedBox.shrink(),
-              MjpegState.idle => const _VideoHint('стрим остановлен'),
-              MjpegState.connecting => const _VideoHint(
-                'подключение к стриму…',
-              ),
-              MjpegState.reconnecting => const _VideoHint(
-                'связь потеряна, переподключение…',
-              ),
+              MjpegState.idle => _VideoHint(s.streamStopped),
+              MjpegState.connecting => _VideoHint(s.streamConnecting),
+              MjpegState.reconnecting => _VideoHint(s.streamReconnecting),
             },
         ],
       ),
@@ -615,8 +622,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           const SizedBox(height: 10),
           Text(
             _gpadNames.isEmpty
-                ? 'Геймпад не найден — подключите его к телефону'
-                : 'Геймпад: ${_gpadNames.first}',
+                ? L10n.of(context).gamepadNotFound
+                : L10n.of(context).gamepadName(_gpadNames.first),
             style: Theme.of(context).textTheme.bodySmall,
             textAlign: TextAlign.center,
           ),
