@@ -17,6 +17,10 @@ class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var eventSink: EventChannel.EventSink? = null
     private var lastAxesSent = 0L
+    // событие, отложенное троттлингом (см. dispatchGenericMotionEvent)
+    private var pendingX = 0f
+    private var pendingY = 0f
+    private var pendingPosted = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -85,16 +89,38 @@ class MainActivity : FlutterActivity() {
             e.action == MotionEvent.ACTION_MOVE
         ) {
             val now = SystemClock.elapsedRealtime()
+            val x = e.getAxisValue(MotionEvent.AXIS_X)
+            val y = e.getAxisValue(MotionEvent.AXIS_Y)
             if (now - lastAxesSent >= 50) {
                 lastAxesSent = now
-                val x = e.getAxisValue(MotionEvent.AXIS_X)
-                val y = e.getAxisValue(MotionEvent.AXIS_Y)
-                mainHandler.post {
-                    eventSink?.success(mapOf("type" to "axes", "x" to x, "y" to y))
-                }
+                sendAxes(x, y)
+            } else if (!pendingPosted) {
+                // Не отбрасываем, а откладываем до конца окна троттлинга:
+                // иначе теряется ПОСЛЕДНЕЕ событие — возврат стика в ноль при
+                // отпускании (индикатор в клиенте замирал отклонённым, моторы
+                // продолжали повторять последнюю команду).
+                pendingX = x
+                pendingY = y
+                pendingPosted = true
+                mainHandler.postDelayed({
+                    pendingPosted = false
+                    if (eventSink != null) {
+                        lastAxesSent = SystemClock.elapsedRealtime()
+                        sendAxes(pendingX, pendingY)
+                    }
+                }, 50 - (now - lastAxesSent))
+            } else {
+                pendingX = x
+                pendingY = y
             }
             return true
         }
         return super.dispatchGenericMotionEvent(event)
+    }
+
+    private fun sendAxes(x: Float, y: Float) {
+        mainHandler.post {
+            eventSink?.success(mapOf("type" to "axes", "x" to x, "y" to y))
+        }
     }
 }
